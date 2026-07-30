@@ -67,6 +67,7 @@ The AI agent on this project operates as a senior engineer. This means:
 
 - Folders: `kebab-case` (`src/components/chat`, `src/server/data`).
 - React components: `PascalCase.tsx`, one component per file, named the same as the file (`MessageBubble.tsx` exports `MessageBubble`).
+- **`src/components/ui/` is the one exception**, and stays `kebab-case.tsx` with multiple exports per file (`dialog.tsx` exports ten). These are vendored shadcn primitives that we retune rather than author: renaming them breaks `shadcn add` and every example in their docs, and a Radix primitive is inherently a family of parts, not one component. The PascalCase, one-per-file rule applies everywhere we write a component ourselves.
 - Non-component TypeScript: `kebab-case.ts` (`shared-key-usage.ts`, `model-catalog.ts`).
 - Next.js special files keep their framework names exactly: `page.tsx`, `layout.tsx`, `route.ts`, `loading.tsx`, `error.tsx`, `not-found.tsx`, `default.tsx`, `proxy.ts`.
 - Hooks live beside the component that uses them, or in `src/components/<area>/hooks/`, named `use-thing.ts` exporting `useThing`.
@@ -328,8 +329,16 @@ secret read there would be bundled and shipped to the browser. Nothing under
 | `SUPABASE_SECRET_KEY` | `src/server/env.ts` → `src/server/supabase.ts`, reachable only from `src/server/quota.ts`. Format `sb_secret_…` | **Yes** — assumes `service_role`, bypassing RLS entirely |
 | `ENCRYPTION_KEY` | `src/server/env.ts` → `src/server/vault.ts` only. 32 bytes, base64-encoded | **Yes** — compromise exposes every stored user key |
 | `SHARED_GEMINI_API_KEY` | `src/server/env.ts` → `src/server/providers.ts` only | **Yes** — this is your billed key |
-| `SHARED_KEY_DAILY_MESSAGE_LIMIT` | `src/lib/constants.ts`. Default `20` | No |
-| `SHARED_KEY_MONTHLY_USD_CEILING` | `src/lib/constants.ts`. Default `10` | No |
+| `NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT` | `src/lib/constants.ts`. Default `20` | No — and the prefix is load-bearing, see below |
+| `NEXT_PUBLIC_SHARED_KEY_MONTHLY_USD_CEILING` | `src/lib/constants.ts`. Default `10` | No |
+
+**Why the two quota limits carry `NEXT_PUBLIC_`.** Next inlines only
+`NEXT_PUBLIC_*` into client bundles. Unprefixed, the composer's read of
+`process.env.SHARED_KEY_DAILY_MESSAGE_LIMIT` would be `undefined` and fall back
+to `20`, while the server enforced whatever was actually configured — a silent
+disagreement between the number shown and the number enforced. Neither value is
+a secret; the daily cap is displayed in the UI by design. The cost is that both
+are inlined at **build** time, so changing either on Render needs a rebuild.
 
 **On Supabase key naming.** These are the current names. `anon` and `service_role`
 are the legacy JWT keys, deprecated by end of 2026 — both still work, and the old
@@ -366,12 +375,12 @@ export const SHARED_MODEL_ID = 'gemini-2.5-flash' as const
 
 /** Per-user shared-key allowance, resetting at 00:00 UTC. */
 export const SHARED_KEY_DAILY_MESSAGE_LIMIT = Number(
-  process.env.SHARED_KEY_DAILY_MESSAGE_LIMIT ?? 20,
+  process.env.NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT ?? 20,
 )
 
 /** Global monthly ceiling. Breaching it trips the circuit breaker for every user. */
 export const SHARED_KEY_MONTHLY_USD_CEILING = Number(
-  process.env.SHARED_KEY_MONTHLY_USD_CEILING ?? 10,
+  process.env.NEXT_PUBLIC_SHARED_KEY_MONTHLY_USD_CEILING ?? 10,
 )
 
 /** Show the quota warning in the composer at this many remaining messages. */
@@ -431,7 +440,9 @@ export const MAX_TITLE_LENGTH = 60
 - shadcn/ui components are restyled to these tokens on installation. Never leave a generated component with its default `zinc`/`slate` palette or its default `0.5rem` radius.
 - All text must clear WCAG AA against `--color-canvas`. `--color-mute` is the lightest text permitted and is only for timestamps and fine print — never for body copy.
 - Focus states are visible on every interactive element: a 1px `--color-primary` ring offset by 2px. Never `outline: none` without a replacement.
-- **Mobile-first, two prefixes.** Write the mobile case unprefixed, then layer `tablet:` (768px) and `desktop:` (1024px). Tailwind's `sm:`/`md:`/`lg:`/`xl:`/`2xl:` are deleted from the theme and will not compile — if you reach for one, you are adding a breakpoint the design system does not have.
+- **Mobile-first, two prefixes.** Write the mobile case unprefixed, then layer `tablet:` (768px) and `desktop:` (1024px). Tailwind's `sm:`/`md:`/`lg:`/`xl:`/`2xl:` are deleted from the theme. Note the failure mode: they do not error, they generate **nothing**, so the style silently never applies — which is exactly why reaching for one is a defect rather than an experiment.
+- **Never use a named width utility.** The `DESIGN.md` spacing tokens shadow Tailwind's container scale, so `max-w-md` is 10px, `max-w-xs` is 4px, and `max-w-4xl` is 64px — silently, with no error. Express widths numerically on the 4px grid: the sidebar is `w-65` (260px), the outline rail `w-55` (220px), the thread measure `max-w-180` (720px), a dialog `max-w-112` (448px). An ESLint rule rejects the named forms. Named tokens stay correct for padding, gap, and margin.
+- **A new token in `globals.css` also goes in `src/lib/utils.ts`.** `cn()` uses `extendTailwindMerge` with the type and radius scales declared explicitly, because `tailwind-merge` cannot otherwise tell a custom type step from a custom text colour and will drop one of them. A token missing from that list is quietly unreliable wherever `cn()` composes it.
 - **Nothing lives only on hover.** A control or piece of information revealed by `hover:` must be persistently visible under `pointer-coarse:`. Write the pair together — `opacity-0 hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100` — never the hover half alone. The test is simple: if a touch user cannot reach it, it is a defect, not a refinement.
 - **Images always carry `unoptimized`.** Render runs the Next image optimizer inside the same Node process that serves streams, and its disk cache does not survive a redeploy. The correct sizes already exist in storage from upload time — `thumb_path` for chips, `inline_path` for the message column, `storage_path` only in the lightbox. Always pass explicit `width` and `height` so the layout does not shift.
 - **Payload size is a first-order concern.** There is no CDN in front of the origin, so every byte ships from one region, from the process that is also streaming. Prefer a Server Component to a client one, and reach for `next/dynamic` for anything heavy that is not needed on first paint.
@@ -498,7 +509,7 @@ Approved dependencies for this project:
 - `tailwindcss` — v4, styling
 - `clsx`, `tailwind-merge` — the `cn()` helper
 - `class-variance-authority` — component variants, required by shadcn/ui
-- `@radix-ui/*` — accessible primitives pulled in by shadcn/ui components as needed
+- `radix-ui` — accessible primitives. This is the current unified package (`import { Dialog } from 'radix-ui'`), which is what the shadcn CLI now installs; it supersedes the per-primitive `@radix-ui/react-*` packages
 - `lucide-react` — icons
 - `react-markdown`, `remark-gfm` — assistant message rendering
 - `shiki` — syntax highlighting in code blocks

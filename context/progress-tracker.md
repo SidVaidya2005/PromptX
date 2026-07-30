@@ -18,8 +18,8 @@ progress, and what is next.
 ## Current Status
 
 **Phase:** Phase 0 — Foundation
-**Last completed:** Nothing yet — build not started
-**Next:** 01 Project scaffold and design tokens
+**Last completed:** 01 Project scaffold and design tokens — Next 16.2.12 / React 19.2.4 / Tailwind v4, full `DESIGN.md` token block, three self-hosted fonts, five retuned shadcn primitives, boundary lint rules proven to fire, Vitest green
+**Next:** 02 Supabase project and schema migration
 
 ---
 
@@ -27,7 +27,7 @@ progress, and what is next.
 
 ### Phase 0 — Foundation
 
-- [ ] 01 Project scaffold and design tokens
+- [x] 01 Project scaffold and design tokens
 - [ ] 02 Supabase project and schema migration
 - [ ] 03 Row-Level Security policies
 - [ ] 04 Google Sign-In
@@ -99,4 +99,11 @@ progress, and what is next.
 
 ## Key Decisions
 
-_None yet._
+1. **`cn()` must declare every custom token scale.** `tailwind-merge` knows only Tailwind's default class groups, so it dropped `text-button-md` when composed with `text-on-primary` and failed to dedupe `rounded-sm` against `rounded-pill`. `src/lib/utils.ts` uses `extendTailwindMerge`; a token added to `globals.css` and not to that list is silently unreliable. (F01)
+2. **Never use a named width utility.** The `DESIGN.md` spacing tokens shadow Tailwind's container scale — `max-w-md` is 10px, `max-w-xs` is 4px. Widths are numeric on the 4px grid (`max-w-112` = 448px), enforced by an ESLint rule. (F01)
+3. **The `@theme` font tokens reference the `next/font` CSS variables**, not the family names, so the metric-matched fallback that prevents layout shift stays in the chain. (F01)
+4. **shadcn primitives are retuned in place, with no alias layer.** One vocabulary; a freshly added component looks wrong until retuned, which is the point. (F01)
+5. **The two quota limits are `NEXT_PUBLIC_*`.** Next inlines only that prefix into client bundles, and the composer displays the cap — unprefixed, the UI and the server would disagree silently. (F01)
+6. **`corepack` is not assumed to exist.** Node 26 does not ship it; `pnpm` is installed via `npm` and feature 38's build command was amended accordingly. (F01)
+7. **Unit tests live in `tests/`, and `server-only` is aliased to an empty stub under Vitest** — otherwise every `src/server/` module throws at import time. (F01)
+8. **Vitest ships in Phase 0, Playwright in feature 36.** Feature 03's RLS suite needs the former; nothing needs the latter until there is a spec to run. (F01)

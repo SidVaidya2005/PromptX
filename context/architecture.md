@@ -1107,9 +1107,17 @@ the semantic name, never a hex value.
   --color-warn: #d6a962;
   --color-success: #8fae7e;
 
-  --font-sans: Inter, system-ui, -apple-system, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  /* These MUST reference the next/font variables, never the family name
+     directly. next/font emits two families per face — the real one (`Inter`)
+     and a metric-matched fallback (`Inter Fallback`: local(Arial) with an
+     ascent/descent override and size-adjust). Only the CSS variable references
+     both, in order. Writing the literal `Inter` here still finds the
+     self-hosted face but skips the metric-matched fallback and drops to
+     system-ui while the webfont loads — the exact layout shift next/font
+     exists to prevent. Variables are set on <html> in layout.tsx. */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: var(--font-instrument-serif), Georgia, "Times New Roman", serif;
 
   /* The DESIGN.md type scale, one utility per step. A font-size token carries
      its line-height, tracking and weight via `--` modifiers, so `text-display-md`
@@ -1195,15 +1203,51 @@ the semantic name, never a hex value.
   --spacing-5xl: 96px;
 
   /* The design system has exactly two boundaries. Clearing the namespace first
-     deletes Tailwind's sm/md/lg/xl/2xl, so `sm:flex-row` fails to compile
-     rather than silently introducing a third breakpoint nobody designed.
+     deletes Tailwind's sm/md/lg/xl/2xl, so no third breakpoint can be
+     introduced by accident. Note the failure mode: Tailwind emits NOTHING for
+     `sm:flex-row` — it is not a build error, just silence, so the style simply
+     never applies. Verified by injecting all five and diffing the output CSS.
      rem, not px — Tailwind sorts breakpoints by unit and mixing them
      misorders the generated utilities. */
   --breakpoint-*: initial;
   --breakpoint-tablet: 48rem;   /* 768px */
   --breakpoint-desktop: 64rem;  /* 1024px */
+
+  /* Cleared so Tailwind's rounded-xl/2xl/3xl/4xl cannot be reached; the scale
+     below is exactly DESIGN.md's. rounded-none and rounded-full are static
+     utilities rather than namespace entries, so they survive the reset and
+     already match DESIGN.md's 0px and 9999px. */
+  --radius-*: initial;
+  --radius-none: 0px;
+  --radius-xxs: 1px;
+  --radius-xs: 2px;
+  /* …sm / md / lg / pill as above… */
 }
 ```
+
+**The named spacing tokens shadow Tailwind's container scale.** `--spacing-md`
+and friends share their names with `max-w-md`, `max-w-xs`, `max-w-4xl` and the
+rest of Tailwind's container scale, and the spacing token wins. `max-w-md`
+resolves to **10px**, `max-w-xs` to **4px**, `max-w-4xl` to **64px** — silently,
+with no error, just a collapsed element.
+
+So **never use a named width utility**. Express widths numerically on the 4px
+grid, which is what `DESIGN.md` specifies anyway: the sidebar is `w-65` (260px),
+the outline rail `w-55` (220px), the thread measure `max-w-180` (720px), a
+dialog `max-w-112` (448px). An ESLint rule in `eslint.config.mjs` rejects
+`max-w-*` / `min-w-*` with a container-scale name, because the failure is
+otherwise invisible. Named tokens remain correct for padding, gap, and margin,
+which is what they exist for.
+
+**`cn()` must be taught these scales.** `tailwind-merge` knows Tailwind's default
+class groups and nothing else, so out of the box it silently corrupted two of
+them: it could not distinguish a custom type step from a custom text colour and
+dropped `text-button-md` from `cn('text-button-md', 'text-on-primary')`, and it
+did not recognise `rounded-pill` at all, so `cn('rounded-sm', 'rounded-pill')`
+kept both and left the winner to CSS source order. `src/lib/utils.ts` therefore
+uses `extendTailwindMerge` with the full type and radius scales declared. **Any
+token added to `globals.css` must be added there too**, or it is quietly
+unreliable wherever `cn()` composes it.
 
 **A font-size token does not carry its family.** Tailwind's `--text-*` modifiers
 cover line-height, letter-spacing and weight only, so the three steps whose

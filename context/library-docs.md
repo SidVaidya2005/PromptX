@@ -742,12 +742,19 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Required. See "The server-only gotcha" below.
+      'server-only': fileURLToPath(
+        new URL('./tests/stubs/server-only.ts', import.meta.url),
+      ),
+    },
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
-    setupFiles: ['./vitest.setup.ts'],
+    // Tests live in tests/, mirroring src/server/ — see architecture.md's
+    // folder structure and the naming rule in code-standards.md.
+    include: ['tests/**/*.test.ts'],
     restoreMocks: true,
     unstubEnvs: true,
   },
@@ -759,13 +766,22 @@ export default defineConfig({
 env vars after every test so a leaked `ENCRYPTION_KEY` cannot make the next test
 pass for the wrong reason.
 
+**The `server-only` gotcha.** Every module under `src/server/` begins with
+`import 'server-only'`, and that package resolves to a module which *throws*
+unless the bundler sets the `react-server` export condition. Vitest sets no such
+condition, so without the alias above the entire server suite fails at import
+time — before a single assertion runs, and for a reason that has nothing to do
+with what is being tested. The stub at `tests/stubs/server-only.ts` is an empty
+module and must stay that way; the real guard still does its job at build time,
+which is where it matters.
+
 ### Testing the vault
 
 `src/server/vault.ts` reads `ENCRYPTION_KEY` from `process.env` directly, so
 stub it rather than mocking the module:
 
 ```typescript
-// src/server/vault.test.ts
+// tests/server/vault.test.ts
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { decrypt, encrypt } from '@/server/vault'

@@ -61,6 +61,14 @@ token system in place, so no feature is ever built against placeholder styling.
 - `.env.example` covering every variable in `code-standards.md`
 - `src/server/env.ts` validating the **secret** environment with zod at boot, carrying `import 'server-only'`
 - `src/lib/constants.ts` holding public limits only — no secret is readable from `src/lib/`
+- Vitest configured here rather than at feature 03, since `pnpm test` is listed in `CLAUDE.md` as a feature 01–02 command and the feature 03 RLS suite depends on it existing. Playwright is deferred to feature 36, where the first spec is actually written
+
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **shadcn is retuned, not aliased.** `globals.css` carries only the PromptX `@theme`; the CLI's `:root`/`.dark`/`@theme inline` layer is deleted wholesale and each primitive is hand-edited. A future `shadcn add` therefore produces something visibly wrong until retuned, which is the intended forcing function
+- **The two quota env vars are renamed `NEXT_PUBLIC_*`**, because Next inlines only that prefix into client bundles and the composer displays the cap
+- **`pnpm` is installed via `npm`.** Node 26 no longer ships `corepack`, so it cannot be assumed present — see the amended feature 38 build command
+- Three landmines found and closed here rather than in a later feature: the `@theme` font tokens must reference the `next/font` variables; the named spacing tokens shadow Tailwind's container scale (`max-w-md` is 10px); and `cn()` needs `extendTailwindMerge` or it drops custom type steps
 
 ### 02 Supabase project and schema migration
 
@@ -646,7 +654,7 @@ wake is excluded and the numbers describe the app rather than the plan:
 **Logic:**
 
 - `render.yaml` Blueprint committed, defining a single Node Web Service:
-  - Build: `corepack enable && pnpm install --frozen-lockfile && pnpm build` — without `corepack enable` the build fails with `pnpm: not found`, and Corepack pins the exact version from `package.json`'s `packageManager` field rather than whatever happens to be on the image
+  - Build: `npm i -g pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]") && pnpm install --frozen-lockfile && pnpm build`. **Do not use `corepack enable`** — Node no longer bundles Corepack (verified absent on Node 26 during feature 01), so it cannot be assumed present on Render's build image either, and the failure mode is a build that dies with `pnpm: not found`. Reading the version out of `packageManager` keeps the same pinning guarantee Corepack gave. Confirm the actual Node version on the build image and simplify to `corepack enable` only if it is old enough to still ship it
   - Start: `pnpm start` (`next start` binds `PORT` automatically — never hardcode it)
   - Health check path: `/api/health`
   - Region matched to the Supabase project's region
