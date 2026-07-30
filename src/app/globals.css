@@ -1,0 +1,197 @@
+@import 'tailwindcss';
+
+/**
+ * Every value here is transcribed from context/DESIGN.md, which is the source
+ * of truth. Nothing may be invented at a call site: if a component needs a
+ * colour, radius, or type step, it comes from this block or it does not exist.
+ */
+@theme {
+  /* ── Namespace resets ──────────────────────────────────────────────────
+     Clearing a namespace deletes Tailwind's defaults so an off-system value
+     fails to COMPILE rather than silently rendering something nobody designed.
+     Only these two are cleared. The numeric spacing scale (p-4, size-9) is
+     deliberately kept — it is the 4px grid the design system is built on. */
+
+  /* The design system has exactly two boundaries. Clearing first deletes
+     Tailwind's sm/md/lg/xl/2xl, so `sm:flex-row` fails to compile rather than
+     silently introducing a third breakpoint nobody designed. rem, not px —
+     Tailwind sorts breakpoints by unit and mixing them misorders the
+     generated utilities. */
+  --breakpoint-*: initial;
+  --breakpoint-tablet: 48rem; /* 768px */
+  --breakpoint-desktop: 64rem; /* 1024px */
+
+  /* Cleared so Tailwind's rounded-xl/2xl/3xl/4xl cannot be reached. The scale
+     below is exactly DESIGN.md's. rounded-none and rounded-full are static
+     utilities rather than namespace entries, so they survive the reset and
+     already match DESIGN.md's 0px and 9999px. */
+  --radius-*: initial;
+
+  /* ── Surfaces ──────────────────────────────────────────────────────────
+     Warm dark. Never pure black; the warmth is the brand. */
+  --color-canvas: #2b2622;
+  --color-canvas-soft: #383330;
+  --color-hairline: #3f3a36;
+
+  /* ── Text ─────────────────────────────────────────────────────────────
+     --color-mute is the lightest text permitted, and only for timestamps and
+     fine print. Anything lower fails WCAG AA against the canvas. */
+  --color-ink: #f7f5f0;
+  --color-body-strong: #dad2c1;
+  --color-body: #c9c0ad;
+  --color-mute: #aea69c;
+
+  /* The only "brand colour" is the off-white. There is no chromatic accent. */
+  --color-primary: #f7f5f0;
+  --color-on-primary: #2b2622;
+
+  /* State-only extensions. Reserved for destructive confirmations, quota
+     pressure, and success feedback — never for emphasis, a CTA, or decoration. */
+  --color-danger: #d8735e;
+  --color-warn: #d6a962;
+  --color-success: #8fae7e;
+
+  /* ── Type families ────────────────────────────────────────────────────
+     These MUST reference the next/font variables rather than naming the font
+     directly. next/font emits TWO families per face: the real one (`Inter`) and
+     a metric-matched fallback (`Inter Fallback`, local(Arial) with an
+     ascent/descent override and size-adjust: 107.12%). Only the CSS variable
+     references both, in order. Writing the literal `Inter` here would still
+     find the self-hosted face, but it would skip the metric-matched fallback
+     and drop straight to system-ui while the webfont loads — which is precisely
+     the layout shift next/font exists to prevent. The variables are set on
+     <html> in layout.tsx. */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: var(--font-instrument-serif), Georgia, 'Times New Roman', serif;
+
+  /* ── Type scale ───────────────────────────────────────────────────────
+     One utility per DESIGN.md step. A font-size token carries its line-height,
+     tracking and weight via `--` modifiers, so `text-display-md` sets all four
+     properties at once. Family is NOT carried — the three steps whose family is
+     not Inter need `font-serif` or `font-mono` alongside them. */
+  --text-display-xl: 64px;
+  --text-display-xl--line-height: 70.4px;
+  --text-display-xl--letter-spacing: -1.6px;
+  --text-display-xl--font-weight: 400;
+
+  --text-display-lg: 48px;
+  --text-display-lg--line-height: 52.8px;
+  --text-display-lg--letter-spacing: -1.2px;
+  --text-display-lg--font-weight: 400;
+
+  --text-display-md: 32px;
+  --text-display-md--line-height: 40px;
+  --text-display-md--letter-spacing: -0.8px;
+  --text-display-md--font-weight: 500;
+
+  --text-display-sm: 24px;
+  --text-display-sm--line-height: 32px;
+  --text-display-sm--letter-spacing: -0.4px;
+  --text-display-sm--font-weight: 500;
+
+  /* Pair with `font-serif`. */
+  --text-display-serif: 48px;
+  --text-display-serif--line-height: 52px;
+  --text-display-serif--letter-spacing: -0.5px;
+  --text-display-serif--font-weight: 400;
+
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 28px;
+  --text-body-lg--font-weight: 400;
+
+  --text-body-md: 16px;
+  --text-body-md--line-height: 24px;
+  --text-body-md--font-weight: 400;
+
+  --text-body-md-strong: 16px;
+  --text-body-md-strong--line-height: 24px;
+  --text-body-md-strong--font-weight: 500;
+
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-body-sm--font-weight: 400;
+
+  --text-body-sm-strong: 14px;
+  --text-body-sm-strong--line-height: 20px;
+  --text-body-sm-strong--font-weight: 500;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-caption--font-weight: 400;
+
+  /* Pair with `font-mono`. */
+  --text-code: 13px;
+  --text-code--line-height: 18px;
+  --text-code--font-weight: 400;
+
+  /* Pair with `font-mono`. */
+  --text-code-md: 14px;
+  --text-code-md--line-height: 20px;
+  --text-code-md--font-weight: 400;
+
+  --text-button-md: 14px;
+  --text-button-md--line-height: 20px;
+  --text-button-md--font-weight: 500;
+
+  /* ── Radius ───────────────────────────────────────────────────────────
+     Deliberately tighter than most applications. Pill shapes are reserved for
+     icon containers and status chips — never for a button. */
+  --radius-none: 0px;
+  --radius-xxs: 1px;
+  --radius-xs: 2px; /* inline code, very-small chips */
+  --radius-sm: 3px; /* default button radius */
+  --radius-md: 4px; /* card chrome, messages, composer */
+  --radius-lg: 6px; /* modals */
+  --radius-pill: 9999px;
+
+  /* ── Spacing ──────────────────────────────────────────────────────────
+     Named steps from DESIGN.md, alongside Tailwind's numeric 4px grid.
+
+     ⚠ These names SHADOW Tailwind's container scale. `max-w-md` resolves to
+     --spacing-md (10px), not to 28rem; `max-w-xs` is 4px; `max-w-4xl` is 64px.
+     The shadowing is silent — no error, just a collapsed element.
+
+     So: never use a NAMED width utility (max-w-sm/md/lg/xl/2xl…). Express
+     widths numerically on the 4px grid instead, which is what DESIGN.md
+     specifies anyway — the sidebar is `w-65` (260px), the outline rail `w-55`
+     (220px), the thread measure `max-w-180` (720px). Named tokens stay for
+     padding, gap, and margin, which is what they are for. */
+  --spacing-xxs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 10px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 32px;
+  --spacing-3xl: 48px;
+  --spacing-4xl: 64px;
+  --spacing-5xl: 96px;
+}
+
+@layer base {
+  /* Dark-only by construction. There is no light theme to vary from, so no
+     `dark:` variant and no prefers-color-scheme branch appears anywhere. This
+     tells the browser to render form controls and scrollbars to match. */
+  :root {
+    color-scheme: dark;
+  }
+
+  /* Every interactive element keeps a visible focus ring. Never `outline: none`
+     without a replacement. */
+  :focus-visible {
+    outline: 1px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
