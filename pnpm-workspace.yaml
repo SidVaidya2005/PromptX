@@ -1,0 +1,12 @@
+# Which dependencies may run install scripts. pnpm requires an explicit answer
+# per package rather than a blanket allow.
+allowBuilds:
+  # Next's image optimizer. Never runs here: every image carries `unoptimized`
+  # (an invariant in architecture.md) because the sizes are already correct
+  # from upload time and the single Render instance is busy streaming.
+  sharp: false
+  # The native resolver behind ESLint's import resolution. This one must build:
+  # import/no-restricted-paths has to resolve `@/server/...` to a real path to
+  # enforce the boundary invariants, and a skipped native binding is exactly
+  # how that rule would silently stop firing.
+  unrs-resolver: true
