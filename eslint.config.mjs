@@ -1,0 +1,116 @@
+import { defineConfig, globalIgnores } from 'eslint/config'
+import nextVitals from 'eslint-config-next/core-web-vitals'
+import nextTs from 'eslint-config-next/typescript'
+import importPlugin from 'eslint-plugin-import'
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    '.next/**',
+    'out/**',
+    'build/**',
+    'next-env.d.ts',
+  ]),
+
+  {
+    files: ['src/**/*.{ts,tsx}', 'tests/**/*.ts'],
+    plugins: { import: importPlugin },
+    // No explicit `import/resolver` here on purpose. no-restricted-paths must
+    // resolve `@/server/...` to a real file before it can tell whether the
+    // import crosses a zone, and eslint-config-next already supplies a resolver
+    // that understands the tsconfig alias — verified by deliberately importing
+    // across a zone and watching the rule fire. That resolver is backed by
+    // unrs-resolver, which is why its native build is enabled in
+    // pnpm-workspace.yaml; skip that build and this rule goes quiet.
+    rules: {
+      'import/order': [
+        'error',
+        {
+          groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+          pathGroups: [
+            // React and Next are ONE group per code-standards.md, so they share
+            // a single pattern — separate entries would rank apart and
+            // newlines-between would push a blank line through the middle.
+            {
+              pattern: '{react,react-dom/**,next,next/**}',
+              group: 'builtin',
+              position: 'before',
+            },
+            { pattern: '@/lib/**', group: 'internal', position: 'before' },
+            { pattern: '@/server/**', group: 'internal', position: 'before' },
+            { pattern: '@/components/**', group: 'internal', position: 'after' },
+            { pattern: '@/types/**', group: 'internal', position: 'after' },
+          ],
+          pathGroupsExcludedImportTypes: ['react', 'next'],
+          'newlines-between': 'always',
+        },
+      ],
+
+      /**
+       * The boundary invariants from architecture.md, enforced mechanically.
+       *
+       * This complements `server-only` rather than duplicating it. `server-only`
+       * fails the BUILD when a server module reaches a client bundle; this rule
+       * flags the import statement as you type, and it covers src/lib/ →
+       * src/server/, which never reaches a bundle boundary to trip server-only
+       * in the first place.
+       */
+      'import/no-restricted-paths': [
+        'error',
+        {
+          zones: [
+            {
+              target: './src/components',
+              from: './src/server',
+              message:
+                'Components must never import from src/server/. Server data arrives as a prop or through a fetch.',
+            },
+            {
+              target: './src/lib',
+              from: './src/server',
+              message:
+                'src/lib/ is importable from Client Components, so importing src/server/ here would bundle a secret into the browser.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    // "Supabase queries live only in src/server/data/", as a lint rule.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/server/data/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // DESIGN.md's named spacing tokens (xs…5xl) shadow Tailwind's
+          // container scale, so `max-w-md` silently resolves to --spacing-md
+          // (10px) instead of 28rem. There is no error, just a collapsed
+          // element, which is why this needs to be caught here. Express widths
+          // numerically on the 4px grid: max-w-112 is 448px.
+          selector:
+            'Literal[value=/(^|\\s)(max-w|min-w)-(3xs|2xs|xs|sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl)(\\s|$)/]',
+          message:
+            'Named width utilities are shadowed by the DESIGN.md spacing tokens and silently collapse. Use a numeric width on the 4px grid (max-w-112 = 448px).',
+        },
+        {
+          // Array.from, Buffer.from, and Object.from match this same selector,
+          // and all three appear in legitimate code — the vault reads
+          // Buffer.from(raw, 'base64') — so those receivers are excluded by name.
+          selector:
+            "CallExpression[callee.property.name='from'][callee.object.name!='Array'][callee.object.name!='Buffer'][callee.object.name!='Object']",
+          message:
+            'Supabase queries live only in src/server/data/. Call an exported function from there instead.',
+        },
+      ],
+    },
+  },
+])
+
+export default eslintConfig
