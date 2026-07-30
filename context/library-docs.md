@@ -18,17 +18,18 @@ libraries.
 Before implementing any feature that uses a third party library:
 
 1. **Check the project instruction file** (`CLAUDE.md`) at the project root — it lists installed skills and how to use them. Skills contain up-to-date API docs and patterns specific to this codebase.
-2. **Check if an MCP server is configured** for that library — if available, use it before falling back to general knowledge.
+2. **Check for a docs MCP server** — Context7 (`resolve-library-id` → `query-docs`) or a library-specific one such as the Supabase MCP. Use it before anything below.
 3. **Read this file** for project-specific patterns that override general library knowledge.
 
 The order of authority is:
 
 ```
-MCP server (real-time docs) → Skills via CLAUDE.md → This file (project rules) → General training knowledge
+Context7 / docs MCP server → skills via CLAUDE.md → this file (project rules) → official docs via web search
 ```
 
-Never rely on general training knowledge alone for library APIs — they change
-frequently and training data may be outdated.
+**Never write an API shape from training-data memory.** Library APIs change
+frequently and training data goes stale — a plausible-looking wrong signature
+costs more than asking. If none of the sources above answers it, ask.
 
 This project has both **Context7** (`resolve-library-id` → `query-docs`) and a
 **Supabase MCP server** configured, plus the `supabase` skill. Use them.
@@ -719,6 +720,143 @@ const model = createOpenRouter({ apiKey })('anthropic/claude-opus-5')
 - OpenRouter is never the shared-key fallback. Only Google is, and only with `SHARED_MODEL_ID`.
 - Set `appName: 'PromptX'` and `appUrl` from `NEXT_PUBLIC_SITE_URL` so requests are attributable in the user's OpenRouter dashboard.
 - Provider-specific options go in `providerOptions.openrouter`, not in the top-level `streamText` arguments.
+
+---
+
+## Vitest (`vitest@^4`)
+
+**Check first:** Context7 → `/vitest-dev/vitest`. The subjects this suite must
+cover are fixed in `code-standards.md` → Testing; this section is only about how
+to write them.
+
+### Setup
+
+The `@/` alias is declared with `resolve.alias` rather than the
+`vite-tsconfig-paths` plugin — three lines beat a dependency, per the
+Dependencies gate in `code-standards.md`.
+
+```typescript
+// vitest.config.ts
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+    setupFiles: ['./vitest.setup.ts'],
+    restoreMocks: true,
+    unstubEnvs: true,
+  },
+})
+```
+
+`environment: 'node'` is not optional — the vault needs real `node:crypto`, and
+`jsdom` would shim it. `restoreMocks` and `unstubEnvs` reset spies and stubbed
+env vars after every test so a leaked `ENCRYPTION_KEY` cannot make the next test
+pass for the wrong reason.
+
+### Testing the vault
+
+`src/server/vault.ts` reads `ENCRYPTION_KEY` from `process.env` directly, so
+stub it rather than mocking the module:
+
+```typescript
+// src/server/vault.test.ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { decrypt, encrypt } from '@/server/vault'
+
+beforeEach(() => {
+  vi.stubEnv('ENCRYPTION_KEY', Buffer.alloc(32, 7).toString('base64'))
+})
+
+describe('vault', () => {
+  it('returns the original key after a round trip', () => {
+    const sealed = encrypt('sk-test-abcdef')
+    expect(decrypt(sealed)).toBe('sk-test-abcdef')
+  })
+
+  it('refuses ciphertext whose auth tag does not match', () => {
+    const sealed = encrypt('sk-test-abcdef')
+    sealed.ciphertext[0] ^= 0xff
+
+    expect(() => decrypt(sealed)).toThrow()
+  })
+
+  it('never reuses an IV', () => {
+    const ivs = new Set(
+      Array.from({ length: 500 }, () => encrypt('sk-test').iv.toString('hex')),
+    )
+    expect(ivs.size).toBe(500)
+  })
+
+  it('rejects a master key that is not 32 bytes', () => {
+    vi.stubEnv('ENCRYPTION_KEY', Buffer.alloc(16).toString('base64'))
+    expect(() => encrypt('sk-test')).toThrow(/32 bytes/)
+  })
+})
+```
+
+### Mocking the provider boundary
+
+Provider clients are mocked at `resolveModel()` and nowhere deeper — mocking the
+SDK itself would let a broken resolution path still pass.
+
+```typescript
+import { vi } from 'vitest'
+
+import type { ResolvedModel } from '@/server/providers'
+
+vi.mock('@/server/providers', () => ({
+  resolveModel: vi.fn(
+    async (): Promise<ResolvedModel> => ({
+      model: {} as never,
+      usedSharedKey: true,
+    }),
+  ),
+}))
+```
+
+Match `ResolvedModel` exactly — it is `{ model, usedSharedKey }` and nothing
+more. A mock that returns extra fields will keep passing after the real shape
+changes.
+
+### The quota concurrency test
+
+The invariant that the daily slot is *claimed, never checked* is only provable
+under real concurrency. Fire the requests together against a local Supabase
+instance and count the winners — do not await them in sequence. `reserveSharedSlot`
+signals refusal by throwing, so settle rather than reject the batch:
+
+```typescript
+import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
+import { reserveSharedSlot } from '@/server/quota'
+
+it('issues no more than the daily allowance under concurrent load', async () => {
+  const results = await Promise.allSettled(
+    Array.from({ length: SHARED_KEY_DAILY_MESSAGE_LIMIT * 2 }, () =>
+      reserveSharedSlot(userId),
+    ),
+  )
+
+  const granted = results.filter((r) => r.status === 'fulfilled')
+  expect(granted).toHaveLength(SHARED_KEY_DAILY_MESSAGE_LIMIT)
+})
+```
+
+**Rules:**
+
+- `environment: 'node'`. This suite tests `src/server/`; it does not render components.
+- Never mock `node:crypto`. The vault's whole value is that the real primitive behaves correctly — a mocked cipher tests nothing.
+- Stub secrets with `vi.stubEnv`, never by assigning to `process.env` directly, so `unstubEnvs` can restore them.
+- Mock provider access at `resolveModel()` only. No test may reach a paid provider API.
+- `data/` and quota tests run against a local `supabase start` instance with `supabase/seed.sql`, not against mocks — an RLS policy cannot be verified against a fake client.
+- Sequential `await`s do not prove a race is closed. Any test defending a concurrency invariant uses `Promise.all`.
+- Name tests by behaviour (`it('refuses the 21st shared-key message of the day')`), never by the function called.
 
 ---
 

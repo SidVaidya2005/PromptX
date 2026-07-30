@@ -25,10 +25,15 @@ and never invent a visual value that is not in it.
 - **Read `context/` first.** Never assume — verify against `project-overview.md` and `architecture.md`.
 - **Obey the invariants** in `architecture.md`. They are non-negotiable.
 - **Follow `code-standards.md`** on every change.
-- **For libraries**, follow the authority order: **Context7** (`resolve-library-id` → `query-docs`) → skills and MCP servers (below) → `context/library-docs.md` → general knowledge. If Context7 has no match, use web search for official docs — never rely on training-data memory for API shapes.
+- **For libraries**, follow the authority order: **Context7** (`resolve-library-id` → `query-docs`) → skills and MCP servers (below) → `context/library-docs.md` → official docs via web search. Never write an API shape from training-data memory — if none of those answers it, ask.
 - **Stay in scope.** Build only what the current feature in `build-plan.md` requires.
-- **Update `progress-tracker.md`** after every completed feature — check the box, set current status, and add the single most important decision to "Key Decisions" (cap ~10 bullets).
-- **Archive detail in `build-journal.md`** — after each feature, append a dated entry with full decisions, gotchas, and verification results. Prune `progress-tracker.md` "Key Decisions" into here when it exceeds ~10 bullets. Consult it when revisiting a completed feature, investigating a regression, or making a decision that might conflict with past work.
+- **Use logical commits.** Keep each commit focused, easy to review, and in a working state whenever possible.
+- **Ask before committing.** Never create a commit without explicit user approval, and never add coauthors unless the user explicitly requests them.
+- **Checkpoint every phase.** Before moving to the next phase, run the relevant verification commands, inspect the phase diff, check for obvious bugs/regressions, confirm code consistency, update `progress-tracker.md`, compact `build-journal.md` (see below), and record any follow-up work.
+- **Update `progress-tracker.md`** after every completed feature — tick the box, **overwrite** Current Status (never append to it; it holds only the latest state), and add the single most important decision to the top of "Key Decisions". That section holds the 10 most recent decisions, newest first — when adding an 11th, file the oldest under its topic in `build-journal.md` → **Standing Constraints**.
+- **Append to `build-journal.md` → Feature Log** after each completed feature — a dated entry with the decisions made, gotchas hit, and verification results.
+- **Read `build-journal.md` → Standing Constraints** before any decision that might conflict with past work. It is grouped by topic and holds only what still binds, so it stays short and findable; the Feature Log is for reconstructing how one specific feature went.
+- **Compact `build-journal.md` at phase checkpoints**, never continuously: promote that phase's still-binding decisions into Standing Constraints under their topic, collapse its per-feature entries into a few summary bullets, and drop the `Verified:` lines. Never remove a constraint that still binds. `git` history holds anything removed, so compact confidently.
 
 ### Deployment target
 

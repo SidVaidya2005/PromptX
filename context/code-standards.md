@@ -427,10 +427,15 @@ export const MAX_TITLE_LENGTH = 60
 - `--color-danger`, `--color-warn`, and `--color-success` are defined in `DESIGN.md` as **state-only** tokens. They exist for destructive confirmations, quota warnings, and success feedback. They must never be used for a call to action, a highlight, an icon that is not communicating state, or any decorative purpose. If a colour is saying anything other than "this went wrong / this needs attention / this worked", it is the wrong colour.
 - Elevation is surface contrast plus a 1px `border-hairline`. Do not add `box-shadow` to cards, panels, or the sidebar. Modals and toasts may use a single soft shadow, and nothing else may.
 - Button radius is `rounded-sm` (3px) or `rounded-md` (4px). `rounded-pill` is reserved for icon-only circular buttons and status chips.
-- Type comes from the `DESIGN.md` scale. Headings use Inter at weight 400–500 with the specified negative tracking — never weight 700. Code and model identifiers use DM Mono. Instrument Serif italic is reserved for rare editorial moments (the landing hero) and never appears in the application chrome.
+- Type comes from the `DESIGN.md` scale, applied as one `text-*` utility per step (`text-display-md`, `text-body-sm`, `text-caption`, `text-code`, `text-button-md`, …). Each already carries its size, line-height, tracking and weight, so never pair one with a `font-*` weight, `leading-*`, or `tracking-*` class — and never reach for a Tailwind default step like `text-3xl`, whose 30px and zero tracking are not in this system. Headings use Inter at weight 400–500 — never weight 700. Code and model identifiers use `font-mono text-code`. Instrument Serif italic (`font-serif text-display-serif`) is reserved for rare editorial moments (the landing hero) and never appears in the application chrome.
 - shadcn/ui components are restyled to these tokens on installation. Never leave a generated component with its default `zinc`/`slate` palette or its default `0.5rem` radius.
 - All text must clear WCAG AA against `--color-canvas`. `--color-mute` is the lightest text permitted and is only for timestamps and fine print — never for body copy.
 - Focus states are visible on every interactive element: a 1px `--color-primary` ring offset by 2px. Never `outline: none` without a replacement.
+- **Mobile-first, two prefixes.** Write the mobile case unprefixed, then layer `tablet:` (768px) and `desktop:` (1024px). Tailwind's `sm:`/`md:`/`lg:`/`xl:`/`2xl:` are deleted from the theme and will not compile — if you reach for one, you are adding a breakpoint the design system does not have.
+- **Nothing lives only on hover.** A control or piece of information revealed by `hover:` must be persistently visible under `pointer-coarse:`. Write the pair together — `opacity-0 hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100` — never the hover half alone. The test is simple: if a touch user cannot reach it, it is a defect, not a refinement.
+- **Images always carry `unoptimized`.** Render runs the Next image optimizer inside the same Node process that serves streams, and its disk cache does not survive a redeploy. The correct sizes already exist in storage from upload time — `thumb_path` for chips, `inline_path` for the message column, `storage_path` only in the lightbox. Always pass explicit `width` and `height` so the layout does not shift.
+- **Payload size is a first-order concern.** There is no CDN in front of the origin, so every byte ships from one region, from the process that is also streaming. Prefer a Server Component to a client one, and reach for `next/dynamic` for anything heavy that is not needed on first paint.
+- **Do not infer input from width.** An iPad in landscape is 1024px and gets the `desktop:` layout, but it has no hover and needs 44px touch targets. Breakpoints decide layout; `pointer-coarse:` decides affordances and hit areas. The two are independent and must not be substituted for each other.
 
 ---
 
@@ -482,7 +487,7 @@ Approved dependencies for this project:
 - `react`, `react-dom` — v19.2
 - `typescript` — v5.1+, strict
 - `@supabase/supabase-js` — database and auth client
-- `@supabase/ssr` — cookie-based session handling for the App Router
+- `@supabase/ssr` — v0.12 (pinned to the minor: pre-1.0, and the cookie API is load-bearing for `src/proxy.ts`), cookie-based session handling for the App Router
 - `ai` — v7, Vercel AI SDK core: `streamText`, UI message streams
 - `@ai-sdk/react` — v4, the `useChat` hook
 - `@ai-sdk/openai` — v4, OpenAI provider
@@ -500,9 +505,9 @@ Approved dependencies for this project:
 - `sonner` — toasts
 - `nanoid` — share-link slug generation
 - `server-only` — enforces the server boundary at build time
-- `vitest`, `@vitest/coverage-v8` — unit tests
+- `vitest`, `@vitest/coverage-v8` — v4, unit tests
 - `@playwright/test` — E2E tests
-- `eslint`, `@next/eslint-plugin-next`, `eslint-plugin-import` — linting via the ESLint CLI with flat config (`next lint` was removed in v16)
+- `eslint`, `@next/eslint-plugin-next`, `eslint-plugin-import` — linting via the ESLint CLI with flat config (`next lint` was removed in v16). Carries import ordering *and* the `import/no-restricted-paths` zones that enforce the boundary invariants mechanically
 - `prettier`, `prettier-plugin-tailwindcss` — formatting
 
 Do not install any other packages without updating this list first.

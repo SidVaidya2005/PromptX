@@ -44,6 +44,20 @@ token system in place, so no feature is ever built against placeholder styling.
 - Fonts wired through `next/font/google` in the root layout
 - shadcn/ui initialised and its `button`, `input`, `dialog`, `dropdown-menu`, and `tooltip` primitives restyled to the tokens
 - Prettier with `prettier-plugin-tailwindcss`; ESLint via the CLI with flat config (`eslint.config.mjs`) and the import-order rule — `next lint` no longer exists in v16
+- **The boundary invariants enforced as lint rules, not just prose.** `eslint-plugin-import` is already present for import-order, so this is one more rule from a plugin already loaded — it costs nothing at `dev` or `build` time, since linting is a separate `pnpm lint` step in v16. Set up here, while the tree is empty; retrofitting it after 38 features means clearing a backlog of violations first:
+
+  ```js
+  // eslint.config.mjs
+  'import/no-restricted-paths': ['error', {
+    zones: [
+      { target: './src/components', from: './src/server' },
+      { target: './src/lib',        from: './src/server' },
+    ],
+  }]
+  ```
+
+  `target` is where the restriction applies, `from` is what may not be imported. This complements `server-only` rather than duplicating it: `server-only` fails the **build** when a server module reaches a client bundle, while the lint rule flags the **import statement** as you type, and covers `src/lib/` → `src/server/`, which never reaches a bundle boundary to trip `server-only` in the first place
+- The "queries live only in `src/server/data/`" invariant enforced with `no-restricted-syntax` matching `CallExpression[callee.property.name='from']`, in a flat-config block scoped to `src/**` with `src/server/data/**` ignored. **This one needs care:** `Array.from()` and `Buffer.from()` match the same selector and both appear in legitimate code — the vault reads `Buffer.from(raw, 'base64')`. Exclude them in the selector and verify the rule is quiet against real code before committing to it. If it still proves noisy, drop it and restrict *imports of the Supabase client factory* to `src/server/data/**` instead, which is the same guarantee expressed as an import zone
 - `.env.example` covering every variable in `code-standards.md`
 - `src/server/env.ts` validating the **secret** environment with zod at boot, carrying `import 'server-only'`
 - `src/lib/constants.ts` holding public limits only — no secret is readable from `src/lib/`
@@ -125,7 +139,7 @@ The three-column frame every subsequent feature renders inside.
 **UI:**
 
 - Conversations grouped by Pinned, Today, Previous 7 days, and Older
-- Each row shows the title, truncated to one line, with the relative time on hover
+- Each row shows the title, truncated to one line, with the relative time on hover — and always visible on coarse pointers, where there is no hover to trigger it
 - The active conversation is marked with an off-white left indicator
 - Skeleton rows while loading; an empty state when there are none
 
@@ -180,7 +194,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Markdown rendered with GFM: lists, tables, blockquotes, headings
 - Code blocks with shiki highlighting, a language label, and a copy button
 - Inline code in DM Mono on a subtle `canvas-soft` fill
-- The model that produced each assistant message, shown in DM Mono on hover
+- The model that produced each assistant message, shown in DM Mono on hover, and persistently on coarse pointers. A thread whose model changed mid-conversation is only legible if this is reachable, so it must not depend on a pointer the device does not have
 - A copy button for the whole message
 
 **Logic:**
@@ -334,7 +348,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **UI:**
 
-- An edit action on hover over a user message
+- An edit action on hover over a user message, and persistently visible on coarse pointers — without this the whole feature is unreachable on a touch device
 - The message becomes an inline textarea with Save and Cancel
 - Saving warns that subsequent messages will be removed
 - The thread truncates and the new response streams in
@@ -467,12 +481,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 **Logic:**
 
 - The private `attachments` bucket with its owner-scoped storage policies (created in Phase 0, wired here)
-- `/api/attachments/route.ts` issuing a signed upload URL scoped to `{user_id}/{attachment_id}`
-- Mime type checked against `ALLOWED_ATTACHMENT_MIME_TYPES` and size against `MAX_ATTACHMENT_BYTES`, server-side
+- `/api/attachments/route.ts` issuing a signed upload URL scoped to `{user_id}/{attachment_id}` — and, for images, two more for `_thumb` and `_inline`
+- Mime type checked against `ALLOWED_ATTACHMENT_MIME_TYPES` and size against `MAX_ATTACHMENT_BYTES`, server-side, for every object including the derivatives
+- **Derivatives generated in the browser before upload**, via `createImageBitmap` into an `OffscreenCanvas` and `convertToBlob({ type: 'image/webp' })`: an 80px square `_thumb` and a 1440px longest-edge `_inline`. This keeps the direct-to-storage design intact — the Node process never receives an image byte, and no transform ever lands on the request path. Server-side resizing would put the work on the single free instance that is also serving streams
+- A browser that cannot produce a derivative falls back to uploading the original alone, leaving `thumb_path` and `inline_path` null; the renderer treats null as "use the original"
+- PDFs skip derivation entirely and keep both columns null
 - An `attachments` row created with `status = 'pending'`, a null `message_id`, and a `position`; it flips to `'ready'` on confirmed upload and is linked when the message is sent
 - `MAX_ATTACHMENTS_PER_MESSAGE` (4) enforced server-side at send time, not only in the composer
 - Only `'ready'` rows are attached; a `'pending'` or `'failed'` row is reported to the user rather than silently dropped
-- The `reap-attachments` Edge Function implemented and deployed: it selects rows with a null `message_id` older than `ATTACHMENT_ORPHAN_TTL_HOURS`, removes the objects through the **Storage API**, and only then deletes the rows. It must not be a SQL job — `delete from storage.objects` strands the file, manufacturing the exact leak the reaper exists to prevent
+- The `reap-attachments` Edge Function implemented and deployed: it selects rows with a null `message_id` older than `ATTACHMENT_ORPHAN_TTL_HOURS`, removes **`storage_path`, `thumb_path`, and `inline_path`** through the **Storage API**, and only then deletes the rows. It must not be a SQL job — `delete from storage.objects` strands the file, manufacturing the exact leak the reaper exists to prevent. Collecting only `storage_path` does the same thing to the two derivatives
 - Batched at 1,000 paths per `remove()` call, with a failed storage delete aborting before any row is removed
 - Short-lived signed URLs for reads, generated server-side
 
@@ -481,15 +498,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 **UI:**
 
 - A paperclip button and drag-and-drop onto the composer
-- Thumbnails for images, a file chip for PDFs, each with a remove control
+- Thumbnails for images from `thumb_path`, a file chip for PDFs, each with a remove control
 - A per-file upload progress indicator
-- Attachments rendered inside the sent message; images open in a lightbox
+- Attachments rendered inside the sent message from `inline_path`; images open in a lightbox showing the original from `storage_path`
+- Every image renders through `next/image` with `unoptimized` — the sizes are already correct, and the Next optimizer would burn CPU on the instance serving streams to redo work done at upload time
 - Clear errors for oversized or unsupported files
 
 **Logic:**
 
 - Upload begins on selection, before send, so the send is instant
-- Removing a pending attachment deletes the row and its storage object; if that cleanup fails, the row is left to the reaper rather than retried in a loop
+- Removing a pending attachment deletes the row and **all three** of its storage objects; if that cleanup fails, the row is left to the reaper rather than retried in a loop
 - A failed upload sets `status = 'failed'` and offers a retry, and blocks send with a clear message rather than sending without it
 - Attachments render in `position` order, both in the composer and in the sent message
 - Attachments converted to AI SDK file parts on send
@@ -604,12 +622,24 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Dialogs trap focus and restore it on close
 - All text verified at WCAG AA against `--color-canvas`
 - Verified at 360px, 768px, 1024px, 1440px, and 1920px
+- Verified with a coarse pointer emulated at 1024px — an iPad in landscape gets the desktop layout without hover, so every hover-revealed control must still be reachable there
+- No control or information is hover-only anywhere in the app: audit every `hover:` that changes opacity, visibility, or display for a `pointer-coarse:` counterpart
 - A 200-message conversation scrolls without jank
 
 **Logic:**
 
 - Axe run over every route with no serious or critical violations outstanding
 - `prefers-reduced-motion` respected by every transition
+
+**Performance budget** — measured against a **warm** instance, so the free-tier
+wake is excluded and the numbers describe the app rather than the plan:
+
+- Lighthouse Performance ≥ 90 on `/` and on a signed-in conversation
+- LCP ≤ 2.5s, CLS ≤ 0.1, INP ≤ 200ms
+- First-load JS ≤ 200KB gzipped on `/`; the landing page ships no client component that is not needed for sign-in
+- A 200-message conversation stays within budget — this is the page most likely to breach it
+- `next build` output reviewed for any route whose first-load JS is disproportionate, with `next/dynamic` applied to the offenders
+- Every `next/image` verified to carry `unoptimized` and explicit dimensions
 
 ### 38 Deployment
 
@@ -620,6 +650,9 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
   - Start: `pnpm start` (`next start` binds `PORT` automatically — never hardcode it)
   - Health check path: `/api/health`
   - Region matched to the Supabase project's region
+  - `rootDir: .` — the Next app *is* the repo root. Pointing this at a subdirectory excludes files from build and runtime entirely, so `rootDir: src` would fail on a missing `package.json`. It is a monorepo setting and this is not a monorepo
+  - `buildFilter.ignored` covering `context/**`, `*.md`, and `.claude/**`, so a documentation commit does not rebuild and restart the service. On the free tier a restart hands the next visitor a ~60s cold start, which is a real cost for a change that alters no runtime behaviour
+  - Use `ignored`, never `included` — an include list is fail-open in the wrong direction, silently dropping deploys for any path nobody remembered to list. A `buildFilter` fully replaces existing settings on sync, so the committed file is the whole truth rather than a patch on dashboard state
   - Every secret declared `sync: false`, so values live in the dashboard and never in the committed file
 - `/api/health` route returning `{ ok: true }` with no auth, no database read, and no build metadata
 - Supabase production project migrated, with Google OAuth redirect URLs and the Supabase Auth redirect allowlist updated to the Render domain
@@ -627,7 +660,8 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `pg_cron` confirmed running in production: `select * from cron.job_run_details` shows both jobs succeeding, not merely scheduled
 - **A hard budget cap set on the Google Cloud billing account backing `SHARED_GEMINI_API_KEY`.** The in-app circuit breaker is best-effort — it reconciles measured tokens and can undercount. The provider-side cap is what actually guarantees the bill, and it is not optional
 - `ENCRYPTION_KEY` generated fresh for production and stored only in Render's environment settings
-- **Decide the free-tier cold start.** A free Render service sleeps after 15 minutes idle and takes ~1 minute to wake. Either upgrade to a Starter instance, or accept it deliberately — do not discover it from a visitor. See "The cold-start problem" in `architecture.md`
+- **Free tier, cold start accepted** — the decision is already made in `architecture.md` → "The cold-start problem"; this feature implements it rather than revisiting it. The landing page must read honestly on a waking instance: no client-side fetch, no above-the-fold image, nothing that defers meaningful paint
+- Lighthouse run against production on a **warm** instance, confirming the feature 37 budget survives the real network and the real region — a local run flatters both
 - A production smoke test **from a cold instance**: wait out the spin-down, then sign in, send a message on the shared key, add a key, and share a conversation. Streaming behaves differently on a cold process than a warm one, and this is the path a first-time visitor actually takes
 - `README.md` rewritten with setup instructions, the architecture summary, and a screenshot
 

@@ -12,7 +12,7 @@
 | Framework | Next.js 16 (App Router, React 19.2) | Routing, Server Components, route handlers, streaming. Turbopack is the default builder |
 | Runtime | Node.js 20.9+ | Route handlers run on the Node runtime, not Edge — the vault needs `node:crypto` |
 | Database | Supabase Postgres | All relational data; Row-Level Security is the isolation boundary |
-| Auth | Supabase Auth (Google OAuth) | The only sign-in method. Sessions are cookie-based via `@supabase/ssr` |
+| Auth | Supabase Auth (Google OAuth) | The only sign-in method. Sessions are cookie-based via `@supabase/ssr@^0.12` — pre-1.0, so the minor is pinned: its cookie API has broken across minors before |
 | Object storage | Supabase Storage | Image and PDF attachments, private bucket |
 | Search | Postgres full-text search (`tsvector` + GIN) | Ranked message search. No external search service |
 | Scheduled jobs | `pg_cron` + `pg_net` (Postgres extensions) | Quota reconciliation (every 10 min, pure SQL) and attachment reaping (hourly, via an Edge Function — storage objects cannot be deleted from SQL). Render Cron Jobs are a paid service type unavailable on the free tier |
@@ -65,14 +65,65 @@ Three ways out, in order of honesty:
 2. **Accept it, and make the wait legible.** Render serves a loading page during wake; the landing page should not pretend the app is instant. Cheapest, and defensible for a side project.
 3. **Keep it warm with an external pinger.** A month is at most 744 hours and the free allowance is 750, so one always-on service technically fits. It is against the spirit of the free tier, leaves no headroom for a second service, and Render may treat it as abuse. Documented for completeness, not recommended.
 
-This choice is a deployment-time decision and does not affect any application
-code. Nothing in the build depends on which option is taken.
+**Decided: option 2 — free tier, cold start accepted.** That makes the ~60s wake
+a design constraint rather than a bug, and it is the dominant performance fact
+about this deployment. Two consequences bind the build:
+
+- **The landing page must survive being the slow one.** It is the first thing a waking instance serves, so it carries no client-side data fetch, no above-the-fold image, and nothing that defers meaningful paint. Once the process is up it should be effectively instant, because everything else about the visit already cost a minute.
+- **Nothing may be optimised on the assumption of a warm process.** In-memory caches (the shiki highlighter) are still worth having — they help every request after the first — but no correctness or UX decision may depend on the process having been alive a moment ago.
+
+Revisit this if the project goes into an application; upgrading is a dashboard
+change with no code impact.
 
 ### Region
 
 Put the Render service in the region closest to the Supabase project. Every
 request performs an auth check and at least one query, so a cross-continent hop
 is paid on every page load, twice.
+
+### Deploy triggers
+
+The service's `rootDir` is `.` and stays there. This repo is a single Next
+application at the top level, not a monorepo — `rootDir` excludes everything
+outside it from both build and runtime, so pointing it at a subdirectory would
+strand `package.json` and fail the build.
+
+What is worth configuring is **which commits trigger a deploy**. Roughly half
+this repo is documentation the running service never reads, and on the free tier
+every deploy restarts the process — handing the next visitor a cold start for a
+change that altered no runtime behaviour. `render.yaml` therefore carries:
+
+```yaml
+buildFilter:
+  ignored:
+    - context/**
+    - "*.md"
+    - .claude/**
+```
+
+Ignore-lists only. An `included` list fails open in the wrong direction: any path
+nobody thought to list silently stops deploying, and the symptom is a real fix
+that never shipped. Filter paths are relative to the repository root regardless
+of `rootDir`, and a synced `buildFilter` fully replaces the service's existing
+settings rather than merging with them.
+
+### No CDN
+
+**Decided: the Render origin serves everything, including `/_next/static`.** No
+Cloudflare, no proxy in front. The tradeoff is accepted deliberately: a proxy
+that buffers responses would break SSE streaming, which is the core interaction
+here, and that risk outweighs faster first-load static assets at this traffic
+level.
+
+What this means in practice:
+
+- Static assets are content-hashed and immutable, so Next's own `Cache-Control` headers still make repeat visits fast. The cost is paid by first-time visitors far from the region, and only once.
+- Compression is gzip, from `next start`. There is no brotli, because nothing in front of the origin can add it.
+- **Payload size matters more than it would behind a CDN.** There is no edge to absorb a heavy bundle — every byte is served from one origin, in one region, by the same process handling streams.
+
+Revisit only if measurement shows static-asset latency is a real problem. If a
+CDN is ever added, `/api/*` must bypass it entirely — a cached or buffered
+streaming response is a broken streaming response.
 
 ---
 
@@ -448,6 +499,8 @@ be added — the compare view exists precisely so this stays true.
 | `message_id` | `uuid` | Nullable, `on delete cascade`. Null while the message is still a draft |
 | `position` | `smallint` | Not null, default 0. Display order within its message |
 | `storage_path` | `text` | Not null. `{user_id}/{attachment_id}.{ext}` |
+| `thumb_path` | `text` | Nullable. `{user_id}/{attachment_id}_thumb.webp`. Images only; null for PDFs |
+| `inline_path` | `text` | Nullable. `{user_id}/{attachment_id}_inline.webp`. Images only; null for PDFs |
 | `mime_type` | `text` | Not null. Restricted to the allowlist in `src/lib/constants.ts` |
 | `size_bytes` | `integer` | Not null. Capped at `MAX_ATTACHMENT_BYTES` (10 MB) |
 | `status` | `text` | Not null, default `'pending'`. One of `pending` \| `ready` \| `failed` |
@@ -460,6 +513,9 @@ stable and cannot collide.
 
 - At most `MAX_ATTACHMENTS_PER_MESSAGE` (4) attachments may be linked to one message. The limit is enforced server-side when the message is sent, not only in the composer.
 - A row is created with `status = 'pending'` and a null `message_id` when the signed upload URL is issued. It flips to `'ready'` once the client confirms the upload completed.
+- **An image attachment is three storage objects, not one:** the original, a `_thumb` (80px square, for the 40px composer chip at 2×), and an `_inline` (1440px longest edge, for the message column). Both derivatives are produced **in the browser before upload** and sent through their own signed URLs, so no image is ever transformed on the request path. PDFs have no derivatives and leave both columns null.
+- **Every path that deletes an attachment deletes all three objects.** The reaper, the failed-upload cleanup, and the message-delete sweep each remove `storage_path`, `thumb_path`, and `inline_path`. A cleanup that only knows about the original strands two objects per image — manufacturing the exact leak the reaper exists to prevent, at twice the rate.
+- Derived objects are validated server-side on the same terms as the original: each signed upload URL is issued against the mime allowlist and `MAX_ATTACHMENT_BYTES`. The client produces the derivatives; it is not trusted to have produced them honestly.
 - Sending a message links only `status = 'ready'` rows. A `'pending'` or `'failed'` attachment is dropped from the send and reported to the user rather than silently omitted.
 - An upload that fails or is cancelled sets `status = 'failed'`; the client deletes the row and its storage object immediately. If that cleanup call itself fails, the row is left for the reaper rather than retried in a loop.
 - **Orphan reaping** runs hourly: `pg_cron` invokes a Supabase Edge Function via `pg_net`, which deletes the storage objects through the Storage API and *then* the rows. It cannot be a plain SQL job — deleting a `storage.objects` row does not delete the file, it strands it in the bucket permanently. A SQL-only reaper would manufacture the exact leak it was written to prevent.
@@ -1055,6 +1111,73 @@ the semantic name, never a hex value.
   --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: "Instrument Serif", Georgia, "Times New Roman", serif;
 
+  /* The DESIGN.md type scale, one utility per step. A font-size token carries
+     its line-height, tracking and weight via `--` modifiers, so `text-display-md`
+     sets all four properties at once. Family is NOT carried — see the note below. */
+  --text-display-xl: 64px;
+  --text-display-xl--line-height: 70.4px;
+  --text-display-xl--letter-spacing: -1.6px;
+  --text-display-xl--font-weight: 400;
+
+  --text-display-lg: 48px;
+  --text-display-lg--line-height: 52.8px;
+  --text-display-lg--letter-spacing: -1.2px;
+  --text-display-lg--font-weight: 400;
+
+  --text-display-md: 32px;
+  --text-display-md--line-height: 40px;
+  --text-display-md--letter-spacing: -0.8px;
+  --text-display-md--font-weight: 500;
+
+  --text-display-sm: 24px;
+  --text-display-sm--line-height: 32px;
+  --text-display-sm--letter-spacing: -0.4px;
+  --text-display-sm--font-weight: 500;
+
+  /* Pair with `font-serif`. */
+  --text-display-serif: 48px;
+  --text-display-serif--line-height: 52px;
+  --text-display-serif--letter-spacing: -0.5px;
+  --text-display-serif--font-weight: 400;
+
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 28px;
+  --text-body-lg--font-weight: 400;
+
+  --text-body-md: 16px;
+  --text-body-md--line-height: 24px;
+  --text-body-md--font-weight: 400;
+
+  --text-body-md-strong: 16px;
+  --text-body-md-strong--line-height: 24px;
+  --text-body-md-strong--font-weight: 500;
+
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-body-sm--font-weight: 400;
+
+  --text-body-sm-strong: 14px;
+  --text-body-sm-strong--line-height: 20px;
+  --text-body-sm-strong--font-weight: 500;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-caption--font-weight: 400;
+
+  /* Pair with `font-mono`. */
+  --text-code: 13px;
+  --text-code--line-height: 18px;
+  --text-code--font-weight: 400;
+
+  /* Pair with `font-mono`. */
+  --text-code-md: 14px;
+  --text-code-md--line-height: 20px;
+  --text-code-md--font-weight: 400;
+
+  --text-button-md: 14px;
+  --text-button-md--line-height: 20px;
+  --text-button-md--font-weight: 500;
+
   --radius-sm: 3px;   /* default button radius — deliberately tight */
   --radius-md: 4px;   /* card chrome */
   --radius-lg: 6px;
@@ -1070,8 +1193,43 @@ the semantic name, never a hex value.
   --spacing-3xl: 48px;
   --spacing-4xl: 64px;
   --spacing-5xl: 96px;
+
+  /* The design system has exactly two boundaries. Clearing the namespace first
+     deletes Tailwind's sm/md/lg/xl/2xl, so `sm:flex-row` fails to compile
+     rather than silently introducing a third breakpoint nobody designed.
+     rem, not px — Tailwind sorts breakpoints by unit and mixing them
+     misorders the generated utilities. */
+  --breakpoint-*: initial;
+  --breakpoint-tablet: 48rem;   /* 768px */
+  --breakpoint-desktop: 64rem;  /* 1024px */
 }
 ```
+
+**A font-size token does not carry its family.** Tailwind's `--text-*` modifiers
+cover line-height, letter-spacing and weight only, so the three steps whose
+family is not Inter need the family utility alongside them:
+
+```html
+<h1 class="font-serif text-display-serif">…</h1>
+<code class="font-mono text-code">gemini-2.5-flash</code>
+```
+
+Every other step is Inter, which is `--font-sans` and therefore inherited from
+`body`. Nothing else needs a family class.
+
+**Layout is mobile-first and has two prefixes.** Unprefixed styles are the
+mobile case; `tablet:` applies from 768px and `desktop:` from 1024px. There is
+no third prefix, by construction.
+
+```html
+<!-- drawer on mobile, overlay from 768px, persistent column from 1024px -->
+<aside class="fixed inset-y-0 tablet:absolute desktop:static desktop:w-[260px]">
+```
+
+Width is not the same axis as input. An iPad in landscape is 1024px wide and
+therefore `desktop:`, but it has no hover — so the breakpoint prefixes decide
+*layout* and `pointer: coarse` decides *affordances*. Never use a width query to
+infer that a pointer is fine.
 
 ---
 
@@ -1135,9 +1293,13 @@ the semantic name, never a hex value.
 - No chromatic brand accent is introduced. `--color-danger`, `--color-warn`, and `--color-success` are reserved exclusively for state feedback and are never used for emphasis, decoration, or a call to action.
 - Elevation is expressed with surface contrast and 1px hairline borders. No `box-shadow` on cards.
 - Button radius stays at `--radius-sm` (3px) or `--radius-md` (4px). Pill-shaped buttons are only for icon containers and status chips.
+- No control or information is reachable only on hover. Anything revealed by `:hover` on a fine pointer is persistently visible under `@media (pointer: coarse)`. A touch device must never lose access to a function.
+- Only `tablet:` and `desktop:` responsive prefixes exist. Unprefixed styles are the mobile case; a width query is never used to decide whether hover is available.
 
 **General**
 
 - Every route handler input is parsed with a zod schema before use.
 - Secrets are read from `process.env` inside `src/server/` only, never inlined, and never prefixed `NEXT_PUBLIC_`.
 - Schema changes are made by adding a migration under `supabase/migrations/`, never through the dashboard.
+- No image is transformed on the request path. Every `next/image` carries `unoptimized`; sizes are produced once, in the browser, at upload time. The Node process runs one instance and it is busy streaming.
+- Any code path that deletes an attachment deletes all three of its storage objects — `storage_path`, `thumb_path`, `inline_path` — through the Storage API.

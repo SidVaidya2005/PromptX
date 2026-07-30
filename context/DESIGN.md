@@ -497,16 +497,31 @@ carry no layout shift.
 
 #### Breakpoints
 
-| Name | Width | Key Changes |
-|---|---|---|
-| Mobile | < 768px | Sidebar becomes a drawer; outline rail becomes a sheet; compare columns stack. |
-| Tablet | 768–1023px | Sidebar collapsible and overlaid; outline rail hidden by default. |
-| Desktop | ≥ 1024px | Full three-column shell; compare side by side. |
+| Name | Width | Prefix | Key Changes |
+|---|---|---|---|
+| Mobile | < 768px | *(none)* | Sidebar becomes a drawer; outline rail becomes a sheet; compare columns stack. |
+| Tablet | 768–1023px | `tablet:` | Sidebar collapsible and overlaid; outline rail hidden by default. |
+| Desktop | ≥ 1024px | `desktop:` | Full three-column shell; compare side by side. |
+
+These are the only two boundaries. Tailwind's default `sm`/`md`/`lg`/`xl`/`2xl`
+are cleared from the theme, so no third breakpoint can be introduced by accident.
+
+#### Pointer & Hover
+
+Width and input are independent axes and must never be substituted for one
+another. An iPad in landscape is 1024 px — full desktop layout — with no hover
+at all, so a layout query cannot tell you whether a pointer is fine.
+
+- **Nothing is reachable only on hover.** Any control or piece of information revealed on `:hover` is persistently visible under `@media (pointer: coarse)`. Hover is a refinement for fine pointers, never the sole route to a function.
+- Hover affordances also respond to `:focus-visible`, so a keyboard reaches everything a mouse does.
+- Layout responds to width (`tablet:`, `desktop:`); affordances and hit areas respond to pointer type (`pointer-coarse:`).
 
 #### Touch Targets
 Controls render at ~36 px tall (8 px vertical padding + 20 px line-height).
-Mobile inflates touch area with additional padding to meet the WCAG 44 × 44 px
-floor. Sidebar rows and outline items get generous vertical padding on touch.
+Coarse pointers inflate touch area with additional padding to meet the WCAG
+44 × 44 px floor — keyed to `pointer: coarse`, not to a breakpoint, so a touch
+laptop and an iPad in landscape are covered too. Sidebar rows and outline items
+get generous vertical padding on touch.
 
 #### Collapsing Strategy
 - Sidebar: persistent at desktop, overlay drawer below 1024 px, collapse state persisted.
@@ -577,7 +592,7 @@ or the sidebar is a defect.
 - No fill, no border. Text `{colors.body-strong}`, `{typography.body-md}`, padding `{spacing.lg}` vertical. Full width of the message column. The absence of chrome is deliberate: responses are the content, not a card.
 
 **`message-meta`** — the model that produced a response, token counts, timestamp.
-- Text `{colors.mute}`, `{typography.code}` (DM Mono). Revealed on hover.
+- Text `{colors.mute}`, `{typography.code}` (DM Mono). Revealed on hover; persistently visible on coarse pointers.
 
 **`message-error`** — a failed or interrupted response.
 - Background `{colors.canvas-soft}`, text and 1 px border `{colors.danger}`, `{typography.body-sm}`, shape `{rounded.md}`. Shows whatever partial content arrived above the error line.
