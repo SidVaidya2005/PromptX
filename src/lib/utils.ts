@@ -52,3 +52,20 @@ const twMerge = extendTailwindMerge({
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs))
 }
+
+/**
+ * Narrows a caller-supplied redirect target to a same-site path.
+ *
+ * `//evil.com` and `/\evil.com` are protocol-relative URLs that a bare
+ * `startsWith('/')` check waves straight through. On /auth/callback that would
+ * be an open redirect that arrives carrying a freshly minted session, which is
+ * why this is a guard rather than a convenience.
+ */
+export function safeRedirectPath(target: string | null | undefined, fallback: string): string {
+  if (!target) return fallback
+
+  const isSameSitePath =
+    target.startsWith('/') && !target.startsWith('//') && !target.startsWith('/\\')
+
+  return isSameSitePath ? target : fallback
+}
