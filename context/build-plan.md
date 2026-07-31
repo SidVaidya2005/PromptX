@@ -93,9 +93,10 @@ depend on being careful.
 
 **Logic:**
 
-- `enable row level security` on every table
+- RLS is **already enabled** on all eight tables — feature 02 did it in the same migration that created them, so this feature only adds policies. Confirm with `list_tables` rather than re-enabling
 - Owner select/insert/update/delete policies scoped to `auth.uid()` on `profiles`, `provider_keys`, `conversations`, `messages`, `attachments`, `prompts`, and `shared_key_usage`
-- No policy of any kind on `shared_key_budget` — service-role access only
+- Write the owner check as `(select auth.uid()) = user_id`, **not** the bare `auth.uid() = user_id` shown in `architecture.md`'s examples. Postgres evaluates the bare form once per row; the subquery form is evaluated once and cached. Supabase's linter reports the bare form as `auth_rls_initplan`, and `architecture.md`'s example block needs amending to match when this lands
+- No policy of any kind on `shared_key_budget` — service-role access only. Its permanent `rls_enabled_no_policy` advisor notice is correct and must not be "fixed"
 - Storage bucket `attachments` created private, with policies matching the first path segment against `auth.uid()`
 - Vitest suite that signs in as user A and asserts that every table returns zero rows belonging to user B under the anon key
 - `supabase/seed.sql` creating two test users with conversations, so the isolation test has something to fail against
@@ -326,7 +327,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `recordSharedKeyTokens()` accumulating tokens into `shared_key_budget` and computing `estimated_usd` from the Gemini Flash rate card in `src/lib/constants.ts`
 - `tripped_at` set when `estimated_usd` exceeds `SHARED_KEY_MONTHLY_USD_CEILING`
 - `reserveSharedSlot()` checking the breaker **before** claiming a slot, returning `503` with `code: 'budget_exhausted'` — a tripped breaker must not consume a user's daily allowance
-- `reconcile_shared_key_usage()` releasing slots orphaned by a process that died between reservation and completion — lowering only, and only on rows untouched for longer than `STREAM_TIMEOUT_MS`
+- `reconcile_shared_key_usage()` **already exists** — feature 02 shipped it, because feature 02 registers the `cron.schedule` call that invokes it and a job pointing at a missing function fails every ten minutes. Its lowering-only behaviour and staleness guard were verified there against seeded drift. This feature only needs to confirm it still holds once real reservations exist
 - Only measured token usage is written to the ledger. A provider failure that reports no usage records nothing and logs a warning; estimates never enter a table that drives a circuit breaker
 - Vitest: an orphaned reservation is released by reconciliation, and a reservation younger than the staleness window is left untouched
 - The month rolling over resets the accumulator and clears `tripped_at`
@@ -497,6 +498,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - An `attachments` row created with `status = 'pending'`, a null `message_id`, and a `position`; it flips to `'ready'` on confirmed upload and is linked when the message is sent
 - `MAX_ATTACHMENTS_PER_MESSAGE` (4) enforced server-side at send time, not only in the composer
 - Only `'ready'` rows are attached; a `'pending'` or `'failed'` row is reported to the user rather than silently dropped
+- The hourly `pg_cron` job **already exists** — feature 02 registered it, calling `public.reap_attachments_tick()`, which reads two Vault secrets and returns early while they are absent. To activate it, create both with `vault.create_secret()` under exactly these names: **`reap_attachments_edge_url`** (the deployed function's URL) and **`reap_attachments_service_key`**. No new `cron.schedule` call is needed
 - The `reap-attachments` Edge Function implemented and deployed: it selects rows with a null `message_id` older than `ATTACHMENT_ORPHAN_TTL_HOURS`, removes **`storage_path`, `thumb_path`, and `inline_path`** through the **Storage API**, and only then deletes the rows. It must not be a SQL job — `delete from storage.objects` strands the file, manufacturing the exact leak the reaper exists to prevent. Collecting only `storage_path` does the same thing to the two derivatives
 - Batched at 1,000 paths per `remove()` call, with a failed storage delete aborting before any row is removed
 - Short-lived signed URLs for reads, generated server-side

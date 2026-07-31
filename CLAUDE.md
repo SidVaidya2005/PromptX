@@ -79,9 +79,16 @@ them to work:
 - `supabase db reset` — reapply every migration and reseed
 - `supabase gen types typescript --local > src/types/database.ts` — regenerate database types after a migration
 
-  The three `supabase` commands need `supabase/` to exist, which **feature 02**
-  creates. The CLI is also a separate install, not a project dependency — it is
-  not on this machine's PATH yet.
+  **These three do not apply to this project as set up.** Feature 02 chose a
+  hosted-only workflow: there is no local stack, and the CLI is not installed.
+  Migrations live in `supabase/migrations/` as the source of truth but are
+  applied through the **Supabase MCP** (`apply_migration`), and types come from
+  MCP `generate_typescript_types`. The commands are kept here because they are
+  what the wider ecosystem assumes — reach for the MCP instead.
+
+  One consequence to keep in view: without `supabase db reset`, **no migration
+  is ever proven to replay from an empty database.** Adding the local stack
+  later is the fix; until then, treat replayability as untested.
 
 ## Skills and MCP servers available
 
