@@ -61,10 +61,7 @@ Before any change that touches secrets, data access, or spending:
 
 ## Commands
 
-> **Nothing below exists yet.** This repository currently contains documentation
-> only — no `package.json`, no `src/`, no `supabase/`. These are the commands
-> feature 01 and 02 will create. Do not run them expecting them to work; the
-> first task in `build-plan.md` is to scaffold the project that provides them.
+Working today (feature 01 shipped the scaffold that provides them):
 
 - `pnpm install` — install dependencies
 - `pnpm dev` — development server on http://localhost:3000 (Turbopack is default in Next 16; no `--turbopack` flag)
@@ -73,10 +70,18 @@ Before any change that touches secrets, data access, or spending:
 - `pnpm lint` — ESLint CLI with flat config (`next lint` was removed in v16)
 - `pnpm typecheck` — `tsc --noEmit`
 - `pnpm test` — Vitest unit tests
-- `pnpm test:e2e` — Playwright end-to-end tests
+
+Not yet — the feature that creates each is named, so do not run them expecting
+them to work:
+
+- `pnpm test:e2e` — Playwright end-to-end tests. Arrives at **feature 36**; there is no `test:e2e` script and no browser binaries before then
 - `supabase start` — start the local Supabase stack
 - `supabase db reset` — reapply every migration and reseed
 - `supabase gen types typescript --local > src/types/database.ts` — regenerate database types after a migration
+
+  The three `supabase` commands need `supabase/` to exist, which **feature 02**
+  creates. The CLI is also a separate install, not a project dependency — it is
+  not on this machine's PATH yet.
 
 ## Skills and MCP servers available
 
