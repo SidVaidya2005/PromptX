@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import type { Database } from '@/types/database'
 
+import { requiredEnv } from '../support/env'
+
 /**
  * Row-Level Security is the isolation boundary in this project, not application
  * code. That claim is only worth anything if something has attacked it, so this
@@ -21,27 +23,6 @@ import type { Database } from '@/types/database'
  *   predicate while skipping the GRANT and PostgREST layers that sit in front
  *   of it in production.
  */
-
-/**
- * Checked at module scope, not in beforeAll: createClient() throws its own
- * opaque "supabaseKey is required" the moment it is called with a blank key,
- * which would land before any hook ran and tell the reader nothing.
- */
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-
-  if (!value) {
-    throw new Error(
-      `${name} is missing. The RLS suite talks to the real Supabase project ` +
-        'and needs NEXT_PUBLIC_SUPABASE_URL, ' +
-        'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY in ' +
-        '.env.local. SUPABASE_SECRET_KEY comes from Dashboard → Project ' +
-        'Settings → API Keys and is not retrievable any other way.',
-    )
-  }
-
-  return value
-}
 
 const SUPABASE_URL = requiredEnv('NEXT_PUBLIC_SUPABASE_URL')
 const PUBLISHABLE_KEY = requiredEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
