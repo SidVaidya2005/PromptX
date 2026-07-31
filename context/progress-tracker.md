@@ -18,8 +18,8 @@ progress, and what is next.
 ## Current Status
 
 **Phase:** Phase 0 — Foundation
-**Last completed:** 02 Supabase project and schema migration — new Singapore project `kplbxqujihxzdltrwxbw`, 3 enums and 8 tables with RLS enabled and no policies yet, generated `search_vector` + GIN, both `pg_cron` jobs registered, reconciliation sweep proven against seeded drift, `src/types/database.ts` generated
-**Next:** 03 Row-Level Security policies
+**Last completed:** 03 Row-Level Security policies — 27 owner policies plus the two `anon` share policies, private `attachments` bucket with owner-scoped object policies, and a 16-test isolation suite that signs in as two real users over HTTP; proven to go red when a policy is weakened, and advisors clean but for `shared_key_budget`
+**Next:** 04 Google Sign-In
 
 ---
 
@@ -29,7 +29,7 @@ progress, and what is next.
 
 - [x] 01 Project scaffold and design tokens
 - [x] 02 Supabase project and schema migration
-- [ ] 03 Row-Level Security policies
+- [x] 03 Row-Level Security policies
 - [ ] 04 Google Sign-In
 - [ ] 05 Application shell
 - [ ] Phase checkpoint — verify Phase 0 — Foundation is stable before starting the next phase
@@ -99,12 +99,13 @@ progress, and what is next.
 
 ## Key Decisions
 
-1. **There is no local Supabase stack.** Migrations are authored as files under `supabase/migrations/` — still the source of truth — and delivered to the hosted project through the Supabase MCP. Consequences that bind everything downstream: no `supabase db reset`, so no migration is ever proven replayable from zero; types come from MCP `generate_typescript_types`, not `gen types --local`; and F03's RLS suite must run against the cloud instance. (F02)
-2. **`cn()` must declare every custom token scale.** `tailwind-merge` knows only Tailwind's default class groups, so it dropped `text-button-md` when composed with `text-on-primary` and failed to dedupe `rounded-sm` against `rounded-pill`. `src/lib/utils.ts` uses `extendTailwindMerge`; a token added to `globals.css` and not to that list is silently unreliable. (F01)
-3. **Never use a named width utility.** The `DESIGN.md` spacing tokens shadow Tailwind's container scale — `max-w-md` is 10px, `max-w-xs` is 4px. Widths are numeric on the 4px grid (`max-w-112` = 448px), enforced by an ESLint rule. (F01)
-4. **The `@theme` font tokens reference the `next/font` CSS variables**, not the family names, so the metric-matched fallback that prevents layout shift stays in the chain. (F01)
-5. **shadcn primitives are retuned in place, with no alias layer.** One vocabulary; a freshly added component looks wrong until retuned, which is the point. (F01)
-6. **The two quota limits are `NEXT_PUBLIC_*`.** Next inlines only that prefix into client bundles, and the composer displays the cap — unprefixed, the UI and the server would disagree silently. (F01)
-7. **`corepack` is not assumed to exist.** Node 26 does not ship it; `pnpm` is installed via `npm` and feature 38's build command was amended accordingly. (F01)
-8. **Unit tests live in `tests/`, and `server-only` is aliased to an empty stub under Vitest** — otherwise every `src/server/` module throws at import time. (F01)
-9. **Vitest ships in Phase 0, Playwright in feature 36.** Feature 03's RLS suite needs the former; nothing needs the latter until there is a spec to run. (F01)
+1. **Every RLS policy is `(select auth.uid()) = user_id`, scoped `to authenticated`.** The bare `auth.uid()` is re-evaluated once per row (`auth_rls_initplan`); omitting the role clause makes owner policies overlap the `anon` share policies, which Postgres ORs per row (`multiple_permissive_policies`). Both forms are silently correct and quietly slow, which is why the rule is written down rather than left to judgement. (F03)
+2. **There is no local Supabase stack.** Migrations are authored as files under `supabase/migrations/` — still the source of truth — and delivered to the hosted project through the Supabase MCP. Consequences that bind everything downstream: no `supabase db reset`, so no migration is ever proven replayable from zero; types come from MCP `generate_typescript_types`, not `gen types --local`; and F03's RLS suite must run against the cloud instance. (F02)
+3. **`cn()` must declare every custom token scale.** `tailwind-merge` knows only Tailwind's default class groups, so it dropped `text-button-md` when composed with `text-on-primary` and failed to dedupe `rounded-sm` against `rounded-pill`. `src/lib/utils.ts` uses `extendTailwindMerge`; a token added to `globals.css` and not to that list is silently unreliable. (F01)
+4. **Never use a named width utility.** The `DESIGN.md` spacing tokens shadow Tailwind's container scale — `max-w-md` is 10px, `max-w-xs` is 4px. Widths are numeric on the 4px grid (`max-w-112` = 448px), enforced by an ESLint rule. (F01)
+5. **The `@theme` font tokens reference the `next/font` CSS variables**, not the family names, so the metric-matched fallback that prevents layout shift stays in the chain. (F01)
+6. **shadcn primitives are retuned in place, with no alias layer.** One vocabulary; a freshly added component looks wrong until retuned, which is the point. (F01)
+7. **The two quota limits are `NEXT_PUBLIC_*`.** Next inlines only that prefix into client bundles, and the composer displays the cap — unprefixed, the UI and the server would disagree silently. (F01)
+8. **`corepack` is not assumed to exist.** Node 26 does not ship it; `pnpm` is installed via `npm` and feature 38's build command was amended accordingly. (F01)
+9. **Unit tests live in `tests/`, and `server-only` is aliased to an empty stub under Vitest** — otherwise every `src/server/` module throws at import time. (F01)
+10. **Vitest ships in Phase 0, Playwright in feature 36.** Feature 03's RLS suite needs the former; nothing needs the latter until there is a spec to run. (F01)

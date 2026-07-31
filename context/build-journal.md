@@ -45,6 +45,18 @@ detail ever removed. Compact confidently.
 - **`shared_key_budget` gets no RLS policy — not in F03, not ever.** RLS is enabled and no policy is defined for any role, which makes the table unreachable through the anon key by construction rather than by rule. It is a global counter with no owner, so there is no `auth.uid()` to scope a policy to. The Supabase advisor reports `rls_enabled_no_policy` against it permanently; that notice is correct and must not be "fixed". (F02)
 - **Extensions are created `with schema extensions`.** A bare `create extension pg_net` registers into `public` and trips the linter's `extension_in_public`. `pg_cron` is the exception — Supabase places it in `pg_catalog` and it publishes through its own `cron` schema. (F02)
 
+- **Every RLS policy uses `(select auth.uid())` and is scoped `to authenticated`.** The bare `auth.uid()` is volatile to the planner and re-evaluated once per row; the subquery form is cached as an InitPlan. The role clause stops owner policies applying to `anon`, where they would overlap the share policies on `conversations` and `messages` and force Postgres to OR them per row. Both mistakes are functionally correct and quietly slow, which is why they are rules rather than judgement calls. The linter names them `auth_rls_initplan` and `multiple_permissive_policies`. (F03)
+- **Two tables deviate from the uniform owner shape, on purpose.** `profiles` has no insert policy (the `security definer` trigger creates the row) and no delete policy (deleting it orphans the user against a surviving `auth.users` row that will never fire the trigger again). `shared_key_usage` has no delete policy — dropping that row is precisely how a user would reset their own daily allowance. Both are narrowings; do not "restore consistency" by adding the missing commands. (F03)
+- **An owner can read their own `provider_keys.ciphertext`, `iv`, and `auth_tag` through PostgREST.** RLS is row-level, not column-level. Accepted, not overlooked: it is the user's own key material and is undecryptable without `ENCRYPTION_KEY`, which never leaves the server. A column-level `revoke` would close it but break `getDecryptedKey()` (F13), which must use the user-scoped client because the service-role client is reserved for `quota.ts`. (F03)
+- **The `attachments` bucket is private and stays private.** Storage paths must begin with the owner's user id, because the object policies match on the first path segment and nothing else — a path built any other way is unreachable by its own owner. (F03)
+
+### Testing
+
+- **Data and policy tests run against the hosted project and own their fixtures.** There is no local stack and no `seed.sql`. The pattern, established in `tests/rls/isolation.test.ts` and to be reused by every later data test: `auth.admin.createUser({ email_confirm: true })` on the service-role client with a `crypto.randomUUID()` email, then `signInWithPassword` on a publishable-key client to get a real JWT, then assertions through that client. `afterAll` deletes the users and the cascade clears the rest. (F03)
+- **Seed fixtures with the service-role client, never through the policies under test.** If seeding goes through a policy that is broken, the table ends up empty and every "cannot see the other user's row" assertion passes for entirely the wrong reason. (F03)
+- **Delete storage objects before deleting an auth user.** Supabase refuses to delete a user who still owns objects, and reports it as a generic delete failure that looks nothing like the cause. (F03)
+- **A test suite that has never failed proves nothing.** The RLS suite was verified by weakening a policy to `using (true)`, confirming exactly the two expected tests went red, and restoring it. Any future change to these policies should be checked the same way. (F03)
+
 ### Quota
 
 - **`reconcile_shared_key_usage()` shipped early, in F02 rather than F17**, because F02 registers the `cron.schedule` call that invokes it and a job pointing at a missing function fails every ten minutes. It is `security invoker`: pg_cron runs it as the table owner, which bypasses RLS without needing elevation. (F02)
@@ -68,6 +80,42 @@ At that phase's checkpoint, the whole phase collapses to:
 -->
 
 ### Phase 0 — Foundation
+
+#### Feature 03 — Row-Level Security policies  *(2026-07-31)*
+
+Migrations `20260731071513` rls_policies and `20260731071540` storage_bucket.
+27 owner policies across seven tables, the two `anon` share policies, a private
+`attachments` bucket with four object policies, and a 16-test isolation suite.
+`@supabase/supabase-js` 2.111.0 added.
+
+- Decision: **`(select auth.uid())` and `to authenticated` on every policy**, against `architecture.md`'s example, which showed the bare form with no role clause. Both mistakes are functionally correct and quietly slow. `architecture.md` amended.
+- Decision: **the two `anon` share policies land here, not at F33.** F33 already reads "the anon RLS policies from Phase 0 are what make the page readable", so leaving them out would have handed that feature a gap it did not expect to fill. It also meant the anon exposure surface could be tested in one place while the harness existed.
+- Decision: **`profiles` and `shared_key_usage` deviate from the uniform owner shape**, both by narrowing. Filed under Standing Constraints so nobody later "fixes" the inconsistency.
+- Decision: **no `supabase/seed.sql`.** `supabase db reset` is what runs a seed file and F02 removed the local stack, so it would have been a second source of fixture truth that never executed. Suites own their fixtures. `build-plan.md` F36 and `library-docs.md` amended to match.
+- Decision: **fixtures seeded with the service-role client**, deliberately bypassing the policies under test. Seeding through them would let a broken insert policy leave the table empty and turn every isolation assertion green for the wrong reason.
+- Decision: **the email-signup hole is F04's to close**, not this feature's. Recorded below because it is currently open.
+
+**Gotchas.**
+
+- **`loadEnv` from `vite` is unreachable.** The plan called for it to read `.env.local` into the test env, but pnpm's strict linking does not expose `vite` at the project root — it is only a transitive dependency of Vitest — and adding it directly to reach one helper fails the Dependencies gate. Replaced with a short parser in `vitest.config.ts` that splits on the **first** `=`, which matters because `ENCRYPTION_KEY` is base64 and ends in padding.
+- **The suite's first draft swallowed its own error message.** The module-level `createClient` calls ran before `beforeAll`, so a missing `SUPABASE_SECRET_KEY` surfaced as supabase-js's opaque `"supabaseKey is required"` instead of the actionable message written for exactly that case. Env is now validated at module scope, before any client is constructed.
+- **`storage.remove()` reports success for paths the caller cannot see.** The obvious assertion — that the call errors — passes vacuously. The only honest check is whether the object survived, so the test lists the prefix as service role afterwards and asserts it is still there.
+- **A leftover from F02, found and fixed here:** `move_pg_net_to_extensions.sql` had been committed as `20260731071500` while the platform recorded `20260731065531`. A future `supabase link && db push` would have re-applied it. All five migration filenames now match their recorded versions.
+
+- Verified: 16 tests pass. Cross-user read by explicit row id, update, delete, and insert-as-someone-else are all refused across `conversations`, `messages`, `prompts`, `provider_keys` and `shared_key_usage`; an unauthenticated publishable-key client reads zero rows from all eight tables.
+- Verified: **the suite fails when it should.** Weakening `conversations`' owner-read policy to `using (true)` turned exactly two tests red — "sees their own conversation and nobody else's" and "cannot read a conversation by its id" — and restoring it turned them green. A suite that has never failed is indistinguishable from one that asserts nothing.
+- Verified: the share path end to end — a conversation is invisible to `anon`, becomes visible with its messages once `share_slug` is set, and vanishes again the moment the slug is nulled. Another user's unshared conversation stays invisible throughout.
+- Verified: user A cannot download an object under user B's storage prefix, and the object survives A's delete attempt.
+- Verified: `get_advisors security` reports **only** `shared_key_budget` / `rls_enabled_no_policy`. `get_advisors performance` reports no `auth_rls_initplan` and no `multiple_permissive_policies` — just an `unused_index` INFO on `prompts_tags_idx`, which has no queries yet.
+- Verified: teardown is complete — 0 `auth.users`, 0 rows in every public table, 0 storage objects, budget singleton intact.
+- Verified: `pnpm typecheck`, `pnpm lint`, and `pnpm build` with `.env.local` moved aside all exit 0.
+
+**Open and deliberately deferred:** the email provider is enabled by default, so
+anyone can POST `/auth/v1/signup` and receive a valid session that could spend
+shared Gemini quota through `/api/chat`. F04 closes it. **F04 must disable
+*signups*, not the *email provider*** — this suite authenticates with
+`signInWithPassword` against admin-created users, and killing the provider takes
+all 16 tests down for a reason that will look nothing like the cause.
 
 #### Feature 02 — Supabase project and schema migration  *(2026-07-31)*
 

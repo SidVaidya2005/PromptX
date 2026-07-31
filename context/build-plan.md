@@ -97,9 +97,11 @@ depend on being careful.
 - Owner select/insert/update/delete policies scoped to `auth.uid()` on `profiles`, `provider_keys`, `conversations`, `messages`, `attachments`, `prompts`, and `shared_key_usage`
 - Write the owner check as `(select auth.uid()) = user_id`, **not** the bare `auth.uid() = user_id` shown in `architecture.md`'s examples. Postgres evaluates the bare form once per row; the subquery form is evaluated once and cached. Supabase's linter reports the bare form as `auth_rls_initplan`, and `architecture.md`'s example block needs amending to match when this lands
 - No policy of any kind on `shared_key_budget` — service-role access only. Its permanent `rls_enabled_no_policy` advisor notice is correct and must not be "fixed"
+- The two `anon` share-link policies from `architecture.md` land here, not at feature 33 — that feature states outright that "the anon RLS policies from Phase 0 are what make the page readable", and the anon exposure surface is best proven in one place while the test harness exists
 - Storage bucket `attachments` created private, with policies matching the first path segment against `auth.uid()`
-- Vitest suite that signs in as user A and asserts that every table returns zero rows belonging to user B under the anon key
-- `supabase/seed.sql` creating two test users with conversations, so the isolation test has something to fail against
+- Vitest suite that signs in as user A and asserts that every table returns zero rows belonging to user B under the anon key. Sessions come from `auth.admin.createUser()` on the service-role client followed by `signInWithPassword` — there is no local stack to seed against, and a real JWT through PostgREST is the only thing that exercises grants, policies, and PostgREST together
+- **Fixtures are seeded with the service-role client**, which bypasses RLS. Seeding through the policies under test would let a broken insert policy leave the table empty, and every "cannot see B's row" assertion would then pass for the wrong reason
+- **No `supabase/seed.sql`.** `supabase db reset` is what executes a seed file and feature 02 removed the local stack, so the file would never run. The suite creates and tears down its own fixtures instead
 
 ### 04 Google Sign-In
 
@@ -112,6 +114,8 @@ depend on being careful.
 **Logic:**
 
 - Google OAuth provider configured in the Supabase dashboard with the correct redirect URLs
+- **Turn off "Allow new users to sign up".** The email provider is enabled by default, so until this is done anyone can POST `/auth/v1/signup` and receive a valid session — bypassing the Google-only invariant entirely and gaining a JWT that can spend shared Gemini quota through `/api/chat`
+- **Disable *signups*, not the *email provider*.** Feature 03's RLS suite authenticates with `signInWithPassword` against admin-created users. Turning signups off blocks new account creation and leaves that working; disabling the provider outright kills password sign-in and takes the entire isolation suite down with it, for a reason that will look nothing like the cause
 - `signInWithOAuth` from the browser client
 - `/auth/callback/route.ts` exchanging the code for a session
 - `/auth/signout/route.ts`
@@ -490,6 +494,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 **Logic:**
 
 - The private `attachments` bucket with its owner-scoped storage policies (created in Phase 0, wired here)
+- **Set the bucket's `file_size_limit` and `allowed_mime_types`.** Feature 03 left both null and this is where they get set. They matter more than they look: uploads go client-direct to Storage through signed URLs, so application code is never in the byte path. Validating mime and size when *issuing* the signed URL does not constrain what actually lands — the bucket-level limits are the only thing enforcing `MAX_ATTACHMENT_BYTES` at the moment of upload
 - `/api/attachments/route.ts` issuing a signed upload URL scoped to `{user_id}/{attachment_id}` — and, for images, two more for `_thumb` and `_inline`
 - Mime type checked against `ALLOWED_ATTACHMENT_MIME_TYPES` and size against `MAX_ATTACHMENT_BYTES`, server-side, for every object including the derivatives
 - **Derivatives generated in the browser before upload**, via `createImageBitmap` into an `OffscreenCanvas` and `convertToBlob({ type: 'image/webp' })`: an 80px square `_thumb` and a 1440px longest-edge `_inline`. This keeps the direct-to-storage design intact — the Node process never receives an image byte, and no transform ever lands on the request path. Server-side resizing would put the work on the single free instance that is also serving streams
@@ -618,7 +623,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 **Logic:**
 
 - Four Playwright specs: sign in, send a message and receive a stream, add a key and confirm only `lastFour` is displayed, exhaust the shared quota and see the wall
-- Run against a local Supabase instance with `seed.sql`
+- Run against the hosted Supabase project, with fixtures created and torn down by the specs themselves. There is no local instance and no `seed.sql` — feature 02 removed the local stack and feature 03 established the admin-create-then-sign-in pattern these specs should reuse
 - Provider responses intercepted with `page.route()`
 - `pnpm test:e2e` green from a clean checkout
 

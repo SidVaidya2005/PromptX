@@ -203,7 +203,8 @@ PromptX/
 │   ├── migrations/                 → timestamped SQL migrations, the schema source of truth
 │   ├── functions/
 │   │   └── reap-attachments/       → deletes orphaned storage objects, then their rows
-│   └── seed.sql                    → local development seed data
+│   (no seed.sql — there is no local stack to reset, so test suites
+│    create and tear down their own fixtures. See F02/F03.)
 ├── tests/                          → Vitest unit tests, mirroring src/server/
 └── e2e/                            → Playwright specs
 ```
@@ -648,11 +649,28 @@ can read or write it.
 Every other table follows a uniform owner shape:
 
 ```sql
-create policy "owner reads"   on messages for select using (auth.uid() = user_id);
-create policy "owner writes"  on messages for insert with check (auth.uid() = user_id);
-create policy "owner updates" on messages for update using (auth.uid() = user_id);
-create policy "owner deletes" on messages for delete using (auth.uid() = user_id);
+create policy "owner reads"   on messages for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "owner writes"  on messages for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+create policy "owner updates" on messages for update to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+create policy "owner deletes" on messages for delete to authenticated
+  using ((select auth.uid()) = user_id);
 ```
+
+Two details in that shape are load-bearing, and both were learned the hard way
+in feature 03:
+
+- **`(select auth.uid())`, never a bare `auth.uid()`.** Postgres treats the bare call as volatile and re-evaluates it *once per row*; wrapped in a subquery it is evaluated once and cached as an InitPlan. Supabase's linter reports the bare form as `auth_rls_initplan`.
+- **`to authenticated` on every owner policy.** Without it the policy applies to every role including `anon`, which makes the owner policies overlap the `anon` share policies below on `conversations` and `messages`. Postgres then ORs them together per row, and the linter reports `multiple_permissive_policies`.
+
+Two tables deviate from this shape deliberately. **`profiles`** has no insert
+policy (the `security definer` trigger creates the row) and no delete policy
+(deleting it orphans the user against a surviving `auth.users` row that will
+never fire the trigger again). **`shared_key_usage`** has no delete policy —
+dropping the row is how a user would reset their own daily allowance.
 
 Public sharing is expressed as two additional read policies for the `anon` role,
 so that share links stay inside RLS rather than bypassing it with a service-role

@@ -870,7 +870,7 @@ it('issues no more than the daily allowance under concurrent load', async () => 
 - Never mock `node:crypto`. The vault's whole value is that the real primitive behaves correctly — a mocked cipher tests nothing.
 - Stub secrets with `vi.stubEnv`, never by assigning to `process.env` directly, so `unstubEnvs` can restore them.
 - Mock provider access at `resolveModel()` only. No test may reach a paid provider API.
-- `data/` and quota tests run against a local `supabase start` instance with `supabase/seed.sql`, not against mocks — an RLS policy cannot be verified against a fake client.
+- `data/` and quota tests run against the **hosted** Supabase project, not against mocks — an RLS policy cannot be verified against a fake client. There is no local stack and no `seed.sql` (F02, F03), so each suite creates its own fixtures and tears them down. Sessions come from `auth.admin.createUser()` on the service-role client followed by `signInWithPassword`; assertions then run through a publishable-key client carrying that JWT, which is what puts grants, policies and PostgREST all in the path. Seed fixtures with the service-role client so a broken write policy cannot leave a table empty and make an isolation assertion pass for the wrong reason. See `tests/rls/isolation.test.ts`.
 - Sequential `await`s do not prove a race is closed. Any test defending a concurrency invariant uses `Promise.all`.
 - Name tests by behaviour (`it('refuses the 21st shared-key message of the day')`), never by the function called.
 
@@ -884,7 +884,7 @@ also available for interactive debugging of a running app.
 **Rules:**
 
 - Four specs only, matching `code-standards.md` → Testing. Do not grow the E2E suite to cover what a unit test can prove.
-- Tests run against a local Supabase instance (`supabase start`) with `supabase/seed.sql`, never against production or a live provider API.
+- Tests run against the hosted Supabase development project, never against production or a live provider API. There is no local instance; specs create and tear down their own fixtures, reusing the pattern in `tests/rls/isolation.test.ts`.
 - Google OAuth is not driven through a real consent screen. Seed a test user and inject the session cookie via `storageState`.
 - Provider calls are intercepted with `page.route()` and answered with a canned stream. No test spends real money.
 - Select by role and accessible name (`getByRole('button', { name: 'Send' })`), never by CSS class — class names are design tokens here and will change.
