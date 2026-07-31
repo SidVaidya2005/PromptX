@@ -167,6 +167,48 @@
   --spacing-3xl: 48px;
   --spacing-4xl: 64px;
   --spacing-5xl: 96px;
+
+  /* ── Motion ────────────────────────────────────────────────────────────
+     The only animations in the system, and they exist for one reason: the
+     mobile drawer and outline sheet.
+
+     ENTRY ONLY, and that asymmetry is load-bearing rather than lazy. Radix
+     unmounts a closing element by waiting for an `animationend` whenever the
+     computed animation-name changes on close. An exit keyframe therefore makes
+     unmounting depend on that event actually arriving — and when it does not,
+     the overlay disappears while the PANEL STAYS on top of the page, still
+     visible and still interactive. Observed directly: Escape left the sidebar
+     stranded with `data-state="closed"` and no animation running.
+
+     With no exit keyframe the computed name stays `none` on close, Radix
+     unmounts immediately, and the failure mode is gone. The cost is that the
+     panel disappears rather than sliding away, which is the lesser problem by
+     a wide margin.
+
+     A transition cannot substitute here: Radix listens for `animationend`, not
+     `transitionend`, so a transition would not survive the close either.
+
+     The prefers-reduced-motion block below zeroes both. */
+  --animate-sheet-in-left: sheet-in-left 150ms ease-out;
+  --animate-sheet-in-right: sheet-in-right 150ms ease-out;
+
+  @keyframes sheet-in-left {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes sheet-in-right {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
 }
 
 @layer base {

@@ -117,3 +117,30 @@ export const SEARCH_RESULT_LIMIT = 30
 
 /** Conversation title generated from the first exchange, capped for the sidebar. */
 export const MAX_TITLE_LENGTH = 60
+
+/**
+ * Where the shell's collapse preferences live.
+ *
+ * A cookie rather than localStorage, and the difference is visible. The (app)
+ * layout is a Server Component, so it can read a cookie during render and emit
+ * the collapsed markup in the first paint. localStorage is unreadable until
+ * after hydration, which means the server would always render the sidebar
+ * expanded and the client would then correct it — a flash on every single
+ * navigation, for exactly the users who asked for it to be closed.
+ *
+ * Written from the client with `document.cookie`; no route handler is involved,
+ * because nothing on the server needs to act on the value beyond rendering it.
+ */
+export const SIDEBAR_COOKIE = 'px_sidebar'
+export const RAIL_COOKIE = 'px_rail'
+
+/**
+ * The two cookie values. Only COLLAPSED is tested for — anything else, including
+ * a missing cookie, reads as expanded, so a first-time visitor gets the full
+ * three-column shell without needing a cookie to have been written first.
+ */
+export const COLLAPSED = 'collapsed'
+export const EXPANDED = 'expanded'
+
+/** One year. A layout preference has no reason to expire mid-session. */
+export const COLLAPSE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365

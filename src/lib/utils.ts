@@ -40,11 +40,15 @@ const TYPE_STEPS = [
 /** Every `--radius-*` step in globals.css. */
 const RADII = ['none', 'xxs', 'xs', 'sm', 'md', 'lg', 'pill'] as const
 
+/** Every `--animate-*` token in globals.css. Only the sheet entry motion exists. */
+const ANIMATIONS = ['sheet-in-left', 'sheet-in-right'] as const
+
 const twMerge = extendTailwindMerge({
   extend: {
     classGroups: {
       'font-size': [{ text: [...TYPE_STEPS] }],
       rounded: [{ rounded: [...RADII] }],
+      animate: [{ animate: [...ANIMATIONS] }],
     },
   },
 })
@@ -68,4 +72,35 @@ export function safeRedirectPath(target: string | null | undefined, fallback: st
     target.startsWith('/') && !target.startsWith('//') && !target.startsWith('/\\')
 
   return isSameSitePath ? target : fallback
+}
+
+/**
+ * The name to show for a person, in descending order of what they chose.
+ *
+ * `profiles.display_name` is nullable and editable, so it can be absent at
+ * signup or blanked later. The email's local part is the fallback rather than
+ * the full address, because the sidebar footer is 260px wide and a long address
+ * truncates to nothing recognisable.
+ */
+export function resolveDisplayName(
+  displayName: string | null | undefined,
+  email: string,
+): string {
+  const trimmed = displayName?.trim()
+  if (trimmed) return trimmed
+
+  const localPart = email.split('@')[0]?.trim()
+  return localPart || email
+}
+
+/**
+ * The single character for an avatar fallback.
+ *
+ * Uses the string iterator rather than `charAt(0)`, so an emoji or any other
+ * astral-plane character yields the whole code point instead of half a
+ * surrogate pair, which renders as a replacement glyph.
+ */
+export function initialOf(name: string): string {
+  const first = [...name.trim()][0]
+  return first ? first.toUpperCase() : '?'
 }
