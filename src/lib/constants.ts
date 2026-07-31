@@ -7,6 +7,55 @@
  * or SHARED_GEMINI_API_KEY — those live in src/server/env.ts.
  */
 
+/**
+ * Reads a NEXT_PUBLIC_ variable, failing loudly rather than shipping `undefined`.
+ *
+ * These are inlined at BUILD time, so a build without them bakes `undefined`
+ * into the client bundle and the failure surfaces as an unexplained runtime
+ * error in the browser. Throwing here turns that into a failed build, which is
+ * the same "fail at boot, not at first request" posture src/server/env.ts takes
+ * for secrets.
+ *
+ * The `process.env.NEXT_PUBLIC_*` member expressions must appear literally at
+ * the call sites below — Next substitutes the literal, not a variable holding
+ * the name.
+ */
+function requiredPublicEnv(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(
+      `${name} is not set. Copy .env.example to .env.local and fill it in; ` +
+        'NEXT_PUBLIC_ variables are inlined at build time, so this must be ' +
+        'present before `pnpm build`, not just before the first request.',
+    )
+  }
+
+  return value
+}
+
+/** Public by design. The publishable key is safe to expose — RLS is the protection. */
+export const SUPABASE_URL = requiredPublicEnv(
+  'NEXT_PUBLIC_SUPABASE_URL',
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+)
+
+export const SUPABASE_PUBLISHABLE_KEY = requiredPublicEnv(
+  'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+)
+
+/**
+ * The base every OAuth redirect and share link is built from.
+ *
+ * Deliberately used instead of the request's own origin. Render terminates TLS
+ * at a proxy, so `new URL(request.url).origin` inside a route handler can be the
+ * internal address rather than the address the browser knows — which produces a
+ * redirect that either 404s or silently drops the session cookie.
+ */
+export const SITE_URL = requiredPublicEnv(
+  'NEXT_PUBLIC_SITE_URL',
+  process.env.NEXT_PUBLIC_SITE_URL,
+)
+
 /** The model served by the shared key. Nothing else is available without a personal key. */
 export const SHARED_MODEL_ID = 'gemini-2.5-flash' as const
 
