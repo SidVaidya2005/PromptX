@@ -113,9 +113,9 @@ depend on being careful.
 
 **Logic:**
 
-- Google OAuth provider configured in the Supabase dashboard with the correct redirect URLs
-- **Turn off "Allow new users to sign up".** The email provider is enabled by default, so until this is done anyone can POST `/auth/v1/signup` and receive a valid session — bypassing the Google-only invariant entirely and gaining a JWT that can spend shared Gemini quota through `/api/chat`
-- **Disable *signups*, not the *email provider*.** Feature 03's RLS suite authenticates with `signInWithPassword` against admin-created users. Turning signups off blocks new account creation and leaves that working; disabling the provider outright kills password sign-in and takes the entire isolation suite down with it, for a reason that will look nothing like the cause
+- Google OAuth provider configured in the Supabase dashboard. The authorized redirect URI belongs to **Supabase** (`https://<ref>.supabase.co/auth/v1/callback`), not to the application — `/auth/callback` is where Supabase sends the browser afterwards, and putting the app's URL in Google produces `redirect_uri_mismatch`
+- **Do NOT turn off "Allow new users to sign up".** An earlier draft of this plan said to, and it is wrong: `DISABLE_SIGNUP` is global, not email-specific. Turning it off blocks new **Google** users from ever creating an account, which destroys the first success criterion in `project-overview.md`. Verified against the live project in feature 04
+- **The open email-signup endpoint is bounded rather than closed.** The email provider stays enabled, because feature 03's isolation suite signs in with `signInWithPassword` against admin-created users and Supabase offers no way to disable email *signup* without also disabling email *sign-in*. What makes this safe is `mailer_autoconfirm = false`: `signUp` issues no session until the address is confirmed, so the endpoint cannot yield a JWT that spends shared Gemini quota. The residual exposure is unconfirmed `auth.users` rows. `tests/auth/auth-config.test.ts` pins all of it
 - `signInWithOAuth` from the browser client
 - `/auth/callback/route.ts` exchanging the code for a session
 - `/auth/signout/route.ts`

@@ -39,6 +39,14 @@ detail ever removed. Compact confidently.
 
 -->
 
+### Auth
+
+- **`DISABLE_SIGNUP` is global, and must stay off.** Supabase's "Allow new users to sign up" toggle sits beside the email provider in the dashboard, but it governs every provider — turning it off stops new **Google** users from creating an account, which is the opposite of what this product needs. There is no per-provider email-signup switch: the only email control is the provider itself, and disabling that kills `signInWithPassword` and F03's isolation suite with it. (F04)
+- **The open `/auth/v1/signup` endpoint is bounded, not closed, and the bound is `mailer_autoconfirm = false`.** A stranger can create an unconfirmed `auth.users` row (and a junk `profiles` row through the trigger), but no session is issued until the address is confirmed, so nothing reaches `/api/chat`. If autoconfirm is ever switched on, that becomes a real JWT-minting hole — which is why `tests/auth/auth-config.test.ts` asserts the flag directly rather than trusting the memory of this decision. (F04)
+- **Google's authorized redirect URI is Supabase's, not the app's.** `https://<ref>.supabase.co/auth/v1/callback` goes in the Google Cloud console; `/auth/callback` is only where Supabase forwards the browser afterwards. Entering the app's URL yields `redirect_uri_mismatch`. (F04)
+- **Every redirect is built from `SITE_URL`, never from the request's origin.** Render terminates TLS at a proxy, so `new URL(request.url).origin` inside a route handler can be the internal address. Supabase's own example works around this with an `x-forwarded-host` dance; using the configured site URL avoids the class of bug entirely. (F04)
+- **`src/proxy.ts` refreshes cookies and never authorises.** Route protection lives in `(app)/layout.tsx` and in each route handler, independently. Nothing may be inserted between `createServerClient` and `await supabase.auth.getUser()` in the proxy — that call is what rotates the token. (F04)
+
 ### Database access
 
 - **`public.handle_new_user()` is the one sanctioned `security definer` function in this codebase.** `library-docs.md` forbids `security definer` without a written reason; this is that reason. The function is fired by an insert on `auth.users`, executes as the auth admin role, and must write into `public.profiles` — there is no invoker-rights formulation that can do this, because the inserting role has no rights on `public`. It is written defensively for a reason Supabase states outright: **a trigger that raises blocks signup.** Hence `set search_path = ''` with every name fully qualified, a `coalesce` chain over the Google identity's metadata keys, and `on conflict (id) do nothing`. `execute` is revoked from `public`, `anon`, and `authenticated`. Any *further* `security definer` function needs its own entry here. (F02)
@@ -55,6 +63,7 @@ detail ever removed. Compact confidently.
 - **Data and policy tests run against the hosted project and own their fixtures.** There is no local stack and no `seed.sql`. The pattern, established in `tests/rls/isolation.test.ts` and to be reused by every later data test: `auth.admin.createUser({ email_confirm: true })` on the service-role client with a `crypto.randomUUID()` email, then `signInWithPassword` on a publishable-key client to get a real JWT, then assertions through that client. `afterAll` deletes the users and the cascade clears the rest. (F03)
 - **Seed fixtures with the service-role client, never through the policies under test.** If seeding goes through a policy that is broken, the table ends up empty and every "cannot see the other user's row" assertion passes for entirely the wrong reason. (F03)
 - **Delete storage objects before deleting an auth user.** Supabase refuses to delete a user who still owns objects, and reports it as a generic delete failure that looks nothing like the cause. (F03)
+- **Vitest ships in Phase 0, Playwright at F36.** F03's RLS suite needs the former; nothing needs browser binaries until there is a spec to run. (F01)
 - **A test suite that has never failed proves nothing.** The RLS suite was verified by weakening a policy to `using (true)`, confirming exactly the two expected tests went red, and restoring it. Any future change to these policies should be checked the same way. (F03)
 
 ### Quota
@@ -80,6 +89,37 @@ At that phase's checkpoint, the whole phase collapses to:
 -->
 
 ### Phase 0 — Foundation
+
+#### Feature 04 — Google Sign-In  *(2026-07-31)*
+
+The full auth loop plus the real landing page. `@supabase/ssr` 0.12.4 added.
+New: `src/lib/supabase-browser.ts`, `src/server/supabase.ts`, `src/server/auth.ts`,
+`src/proxy.ts`, `src/app/auth/{callback,signout}/route.ts`, `src/app/(app)/`
+with a `/chat` stub, `src/components/auth/` and `src/components/landing/`,
+`tests/auth/auth-config.test.ts`, `tests/lib/utils.test.ts`.
+
+- Decision: **the F03 closing note was wrong and is annotated in place rather than quietly dropped.** `DISABLE_SIGNUP` is global — following it would have blocked new Google users. The threat was also overstated: with `mailer_autoconfirm` false, `signUp` yields no session. Configuration left alone; `tests/auth/auth-config.test.ts` pins google-enabled, email-enabled, signup-allowed, and autoconfirm-off, because a dashboard setting has no diff and no history.
+- Decision: **a minimal `(app)` group ships now** — a guard plus a `/chat` stub with a sign-out form — so the loop is clickable rather than merely asserted. F05 replaces the stub wholesale.
+- Decision: **public Supabase config moved into `src/lib/constants.ts`** behind a throwing `requiredPublicEnv()`, instead of the `process.env.X!` that `architecture.md`'s snippets showed. `code-standards.md` permits `!` only on values validated at startup, and three call sites need these. Cost, accepted: `pnpm build` now **fails** without the three public vars, where F01–F03 verified it exits 0. That is the correct trade — `NEXT_PUBLIC_*` is inlined at build time, so building without them bakes `undefined` into the client bundle.
+- Decision: **sign-out is POST-only with a 303.** A GET sign-out is firable by any prefetch or `<img>` tag.
+- Decision: **no Google "G" mark.** The official one is four brand colours and `DESIGN.md` admits no chromatic accent.
+- Decision: **only `createServerSupabaseClient()` ships.** The service-role factory arrives with `src/server/quota.ts`, the one module allowed to call it.
+
+**Gotchas.**
+
+- **The open-redirect guard was not reachable by the obvious test.** `?next=//evil.com` only matters *after* a successful code exchange, so curling the callback with a fake code proved nothing — it failed at the exchange and never reached the check. Moved to `safeRedirectPath()` in `src/lib/utils.ts` and unit-tested, which immediately turned up a second bypass the original inline version missed: `/\evil.example`, which browsers also treat as protocol-relative.
+- **`setAll` takes two arguments now.** `architecture.md` already had `setAll(cookiesToSet, headers)`, which looks like a typo against every Supabase example online — it is not, and the second parameter is real in 0.12. Confirmed against Supabase's current Next 16 example before writing it.
+- **The consent screen shows the raw Supabase project domain**, not "PromptX", because the OAuth client belongs to the Supabase callback host. Cosmetic, and only fixable with a custom auth domain — worth a look at F38, not before.
+- **The first click on the sign-in button did nothing**, silently: the page had not finished hydrating. Not a defect, but worth knowing before debugging a phantom.
+
+- Verified: 23/23 tests pass, including F03's 16 after their env guard was extracted to `tests/support/env.ts`.
+- Verified: the whole loop in a real browser against a real Google account — sign in, land on `/chat`, `/` redirects to `/chat` while signed in, sign out returns to `/`, and `/chat` then bounces to `/`. The OAuth URL carried `scope=email profile` and Supabase's own `redirect_uri`.
+- Verified: **F02's `handle_new_user()` trigger fires on a real Google identity**, not just the shaped probe insert F02 tested with — one `profiles` row, `provider: google`, `display_name` and `avatar_url` both populated.
+- Verified: signed-out `/chat` → 307 to `/`; callback with no code and with `?error=access_denied` → `/?error=auth_failed`; `POST /auth/signout` → 303; `GET /auth/signout` → 405.
+- Verified: no secret value appears anywhere in `.next/static`. The single `sb_secret_` hit is supabase-js's own key-format predicate.
+- Verified: the build fails without the public env vars, with the intended message — checked by moving `.env.local` aside, reading the output, and restoring it.
+- Verified: Tab reaches the sign-in button and draws the 1px `--color-primary` ring at 2px offset.
+- **Not verified:** the mobile layout. The browser window still refuses to resize on this machine — the same limitation F01 recorded. Both are booked for the Phase 0 checkpoint.
 
 #### Feature 03 — Row-Level Security policies  *(2026-07-31)*
 
@@ -116,6 +156,13 @@ shared Gemini quota through `/api/chat`. F04 closes it. **F04 must disable
 *signups*, not the *email provider*** — this suite authenticates with
 `signInWithPassword` against admin-created users, and killing the provider takes
 all 16 tests down for a reason that will look nothing like the cause.
+
+> **Corrected in F04, on both counts.** The remedy above does not exist:
+> `DISABLE_SIGNUP` is global, so turning it off would have blocked new *Google*
+> users too. And the threat was overstated — `mailer_autoconfirm` is false, so
+> `signUp` returns **no session** and never yields a JWT that can reach
+> `/api/chat`. F04 left the configuration alone and pinned it with
+> `tests/auth/auth-config.test.ts` instead. See Standing Constraints → Auth.
 
 #### Feature 02 — Supabase project and schema migration  *(2026-07-31)*
 

@@ -171,6 +171,8 @@ PromptX/
 │   │       └── health/route.ts     → Render health check target. No auth, no DB read.
 │   ├── components/                 → React components. Presentation only.
 │   │   ├── ui/                     → shadcn primitives, restyled to PromptX tokens
+│   │   ├── auth/                   → the Google sign-in button
+│   │   ├── landing/                → signed-out marketing sections, all Server Components
 │   │   ├── chat/                   → thread, message, composer, outline rail, model picker
 │   │   ├── sidebar/                → conversation list, grouping, search entry
 │   │   ├── prompts/                → prompt library cards and editor
@@ -191,7 +193,9 @@ PromptX/
 │   ├── lib/                        → isomorphic. Safe to import from anywhere.
 │   │   ├── supabase-browser.ts     → createBrowserClient
 │   │   ├── models.ts               → the model catalog and capability flags
-│   │   ├── constants.ts            → shared limits and thresholds (PUBLIC config only)
+│   │   ├── constants.ts            → shared limits and thresholds, plus the PUBLIC
+│   │                                 Supabase URL / publishable key / site URL
+│   │                                 (PUBLIC config only)
 │   │   ├── schemas.ts              → zod schemas shared by client and server
 │   │   └── utils.ts                → cn() and small pure helpers
 │   ├── types/
@@ -733,6 +737,11 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
 
+// Public config comes from src/lib/constants.ts, which validates it at load.
+// Never `process.env.NEXT_PUBLIC_X!` at a call site: code-standards.md permits
+// a non-null assertion only on values already checked at startup, and these are
+// inlined at BUILD time, so an unchecked read bakes `undefined` into the bundle.
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from '@/lib/constants'
 import type { Database } from '@/types/database'
 
 /** Cookie-bound client. RLS applies — this is the default for all user data. */
@@ -740,8 +749,8 @@ export async function createServerSupabaseClient() {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY,
     {
       cookies: {
         getAll() {
@@ -768,8 +777,9 @@ export async function createServerSupabaseClient() {
  */
 export function createServiceRoleClient() {
   return createClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SECRET_KEY!,
+    SUPABASE_URL,
+    // From src/server/env.ts — the only module that reads a secret.
+    serverEnv.SUPABASE_SECRET_KEY,
     { auth: { persistSession: false, autoRefreshToken: false } },
   )
 }
@@ -781,13 +791,11 @@ export function createServiceRoleClient() {
 // src/lib/supabase-browser.ts
 import { createBrowserClient } from '@supabase/ssr'
 
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from '@/lib/constants'
 import type { Database } from '@/types/database'
 
 export function createBrowserSupabaseClient() {
-  return createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-  )
+  return createBrowserClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
 }
 ```
 
@@ -804,27 +812,34 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function proxy(request: NextRequest) {
-  const response = NextResponse.next({ request })
+  let response = NextResponse.next({ request })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet, headers) {
-          for (const { name, value, options } of cookiesToSet) {
-            response.cookies.set(name, value, options)
-          }
-          for (const [key, value] of Object.entries(headers)) {
-            response.headers.set(key, value)
-          }
-        },
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
+      },
+      // Two arguments, not one — the `headers` parameter is real in
+      // @supabase/ssr 0.12 and every pre-0.12 example online omits it.
+      setAll(cookiesToSet, headers) {
+        // Rotated cookies go onto the REQUEST as well, so a Server Component
+        // rendering later in this same request sees the refreshed session
+        // rather than the one that just expired.
+        for (const { name, value } of cookiesToSet) {
+          request.cookies.set(name, value)
+        }
+
+        response = NextResponse.next({ request })
+
+        for (const { name, value, options } of cookiesToSet) {
+          response.cookies.set(name, value, options)
+        }
+        for (const [key, value] of Object.entries(headers)) {
+          response.headers.set(key, value)
+        }
       },
     },
-  )
+  })
 
   // Refreshes the token and writes the rotated cookies onto the response.
   // Do not remove: without it, Server Components can render a stale session.
