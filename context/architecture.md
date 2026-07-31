@@ -173,6 +173,8 @@ PromptX/
 │   │   ├── ui/                     → shadcn primitives, restyled to PromptX tokens
 │   │   ├── auth/                   → the Google sign-in button
 │   │   ├── landing/                → signed-out marketing sections, all Server Components
+│   │   ├── shell/                  → the three-column frame: AppShell, Sidebar,
+│   │                                 OutlineRail, collapse toggle, user menu
 │   │   ├── chat/                   → thread, message, composer, outline rail, model picker
 │   │   ├── sidebar/                → conversation list, grouping, search entry
 │   │   ├── prompts/                → prompt library cards and editor
@@ -1293,6 +1295,20 @@ family is not Inter need the family utility alongside them:
 
 Every other step is Inter, which is `--font-sans` and therefore inherited from
 `body`. Nothing else needs a family class.
+
+**Motion is entry-only, and the asymmetry is load-bearing.** The `@theme` block
+declares exactly two animations — `--animate-sheet-in-left` and
+`--animate-sheet-in-right` — for the mobile drawer and outline sheet. There is
+deliberately no closing counterpart.
+
+Radix defers unmounting a closing element to an `animationend` whenever the
+computed `animation-name` changes on close. When that event does not arrive, the
+overlay unmounts while the panel stays on top of the page, still visible and
+still interactive. This was observed directly in feature 05: pressing Escape
+left the sidebar stranded with `data-state="closed"` and no animation running.
+With no exit keyframe the computed name stays `none`, Radix unmounts
+immediately, and the failure mode does not exist. A CSS transition is not a
+substitute — Radix listens for `animationend`, never `transitionend`.
 
 **Layout is mobile-first and has two prefixes.** Unprefixed styles are the
 mobile case; `tablet:` applies from 768px and `desktop:` from 1024px. There is

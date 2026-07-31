@@ -132,16 +132,19 @@ The three-column frame every subsequent feature renders inside.
 - `(app)/layout.tsx`: left sidebar, centre column, right outline rail
 - Sidebar header with the PromptX wordmark and a "New chat" button
 - Sidebar footer with the user's avatar, name, and a menu linking to Settings and Sign out
-- Both side columns collapsible, with the collapsed state persisted in `localStorage`
-- Below 1024px the sidebar becomes a drawer and the outline rail becomes a sheet
+- Both side columns collapsible, with the collapsed state persisted in **a cookie, not `localStorage`**. An earlier draft of this plan said `localStorage`, and it is wrong for the very next line of this feature: the layout is a Server Component, so it cannot read `localStorage` during render. It would paint the sidebar expanded and let the client correct it after hydration — a flash on every navigation, for exactly the people who chose to close it. A cookie is read with `await cookies()` and written from the client with one line of `document.cookie`; no route handler is involved, because the server only ever reads it back
+- A collapsed column leaves a 36px gutter strip carrying its restore button. `DESIGN.md` says only that the columns collapse; a fully hidden one has no way back, and a floating restore button would sit on top of the thread once feature 09 fills it
+- Below 1024px the sidebar becomes a drawer and the outline rail becomes a sheet, both built on one edge-anchored `Sheet` primitive (Radix Dialog, so the focus trap, Escape, and scroll lock come for free)
+- A slim `desktop:hidden` shell header carries both overlay triggers. `DESIGN.md` opens the outline "from the thread header", which does not exist until feature 09 — that feature grows this header into the real one rather than inventing a second
 - Empty state in the centre column inviting the first message
-- `error.tsx` and `loading.tsx` for the route group
+- `error.tsx` and `loading.tsx` for the route group, plus a root `app/not-found.tsx`. The 404 is at the ROOT deliberately: Next resolves a path matching no route against the root not-found, so a `(app)/not-found.tsx` would only ever fire for an explicit `notFound()` inside a route that already exists. It therefore cannot render inside the shell. It is needed here because the account menu links to `/settings`, which feature 13 builds
 
 **Logic:**
 
 - Session enforced in the layout via `requireUser()`
-- Profile data fetched server-side and passed to the sidebar
-- Collapse state in a small client component; the layout itself stays a Server Component
+- Profile data fetched server-side and passed to the sidebar. This introduces `src/server/data/profiles.ts` — the first module in that folder, one feature before feature 06 expected to create it, because the `.from()` lint rule is exempted there and nowhere else
+- Collapse state in a small client component; the layout itself stays a Server Component. The sidebar and rail are passed to it as already-rendered Server Component nodes, so their markup stays in the RSC payload rather than the client bundle
+- The collapse toggle lives inside each column's own header, so it reaches the state through React context — a Server Component takes no function props, and context crosses that boundary at runtime
 
 ---
 
