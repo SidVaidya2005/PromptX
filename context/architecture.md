@@ -1061,7 +1061,7 @@ export async function POST(request: Request) {
     if (!conversation) return Response.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const history = conversationId ? await listByConversation(conversationId) : []
+  const priorMessages = conversationId ? await listByConversation(conversationId) : []
 
   // Resolve and reserve BEFORE writing anything. Claims a shared-key slot
   // atomically when no personal key exists, and throws MissingKeyError (400),
@@ -1091,12 +1091,33 @@ export async function POST(request: Request) {
     usedSharedKey,
   })
 
+  // The model must see the turn that was JUST written. Passing `priorMessages`
+  // unchanged would send everything except the message being answered — an
+  // easy mistake, and a silent one: the model still replies, just to the wrong
+  // thing. (F08)
+  const history = [...toUIMessages(priorMessages), message]
+
+  // Accumulated as it goes past, because it is the ONLY way to keep a partial
+  // answer. `onAbort` receives just `steps`, and a single-step generation
+  // stopped mid-flight has none — measured in F08: stopping with 1,250
+  // characters on screen persisted an empty row until this was added.
+  let streamedText = ''
+
   const result = streamText({
     model,
     system: conversation.system_prompt ?? undefined,
     messages: await convertToModelMessages(history),
-    abortSignal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
-    onFinish: async ({ text, usage }) => {
+    // Composed with the request's own signal, so the browser's stop button
+    // actually ends generation instead of just hiding it.
+    abortSignal: AbortSignal.any([
+      AbortSignal.timeout(STREAM_TIMEOUT_MS),
+      request.signal,
+    ]),
+    onChunk: ({ chunk }) => {
+      if (chunk.type === 'text-delta') streamedText += chunk.text
+    },
+    // v7 renamed this from onFinish, which survives only as a deprecated alias.
+    onEnd: async ({ text, usage }) => {
       await completeMessage(assistantMessageId, {
         content: text,
         inputTokens: usage.inputTokens,
@@ -1106,17 +1127,39 @@ export async function POST(request: Request) {
       // The slot was already claimed; this only reconciles token totals.
       if (usedSharedKey) await recordSharedKeyTokens(user.id, usage)
     },
+    onAbort: async () => {
+      await failMessage(assistantMessageId, {
+        content: streamedText,
+        errorMessage: 'Generation stopped',
+      })
+      if (usedSharedKey) await releaseSharedSlot(user.id)
+    },
     onError: async ({ error }) => {
       console.error('[api/chat] stream failed', error)
       // Keeps whatever partial content arrived, rather than dropping it.
-      await failMessage(assistantMessageId, { error })
+      await failMessage(assistantMessageId, { content: streamedText, errorMessage: '…' })
       // Refund the reserved slot — a failed generation must not cost the user.
       if (usedSharedKey) await releaseSharedSlot(user.id)
     },
   })
 
+  // Wrapped rather than returned directly, so a conversation created by THIS
+  // request can send its id to a client that does not know it yet. Transient,
+  // so it never becomes a message in the thread. (F07/F08)
   return createUIMessageStreamResponse({
-    stream: toUIMessageStream({ stream: result.stream }),
+    stream: createUIMessageStream({
+      execute: ({ writer }) => {
+        if (createdConversationId) {
+          writer.write({
+            type: 'data-conversation',
+            data: { id: createdConversationId },
+            transient: true,
+          })
+        }
+
+        writer.merge(toUIMessageStream({ stream: result.stream }))
+      },
+    }),
   })
 }
 ```

@@ -162,6 +162,10 @@ export function Thread({ conversationId, provider, modelId }: ThreadProps) {
 **Rules:**
 
 - The v7 result exposes `result.stream`, not `result.fullStream`. Pass it to the top-level `toUIMessageStream({ stream })`, never to a method on the result.
+- **`onFinish` is a deprecated alias for `onEnd`.** Use `onEnd`, which carries `{ text, usage, totalUsage, finishReason, steps }`. `usage.inputTokens` and `usage.outputTokens` are `number | undefined` — store them as null rather than defaulting to zero, because feature 17's breaker is fed by measured usage only. (F08)
+- **`onAbort` receives only `steps`, and a single-step generation stopped mid-flight has none.** To keep a partial answer you must accumulate it yourself in `onChunk`, guarding on `chunk.type === 'text-delta'` and reading `chunk.text`. Measured, not assumed: stopping with 1,250 characters on screen persisted an empty row. (F08)
+- Compose the abort signal — `AbortSignal.any([AbortSignal.timeout(STREAM_TIMEOUT_MS), request.signal])` — or the browser's stop button hides the response while the provider keeps generating and billing. (F08)
+- To hand a client something it does not know yet, such as the id of a conversation this request just created, wrap the response in `createUIMessageStream({ execute })`, `writer.write({ type: 'data-…', transient: true })`, then `writer.merge(toUIMessageStream({ stream: result.stream }))`. `transient` keeps it out of the message history. The client reads it through `useChat`'s `onData`. (F08)
 - Request and response bodies are excluded from the result by default in v7. Opt in with `include: { requestBody: true, responseBody: true }` only if genuinely needed — and never for a request carrying a decrypted API key.
 - Message content is in `message.parts`, not `message.content`. Always iterate `parts` and switch on `part.type` — a message can carry text, reasoning, and file parts.
 - `status` is one of `'submitted' | 'streaming' | 'ready' | 'error'`. Derive the composer's disabled state and the stop button's visibility from it; do not track a separate `isLoading` boolean.

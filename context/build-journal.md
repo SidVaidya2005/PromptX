@@ -83,6 +83,8 @@ detail ever removed. Compact confidently.
 
 ### Design system
 
+- **The `@theme` font tokens reference the `next/font` CSS variables, never the family names.** `next/font` emits two families per face — the real one and a metric-matched fallback with an ascent/descent override — and only the CSS variable names both, in order. Writing the literal `Inter` still finds the self-hosted face but skips the fallback and drops to `system-ui` while the webfont loads, which is the exact layout shift `next/font` exists to prevent. (F01)
+
 - **shadcn primitives are retuned in place, with no alias layer.** `globals.css` carries only the PromptX `@theme`; the CLI's `:root`/`.dark`/`@theme inline` layer was deleted wholesale and each primitive hand-edited. One vocabulary, and a freshly added component looks visibly wrong until it is retuned — which is the intended forcing function, not an inconvenience to work around. (F01)
 
 ### Tooling
@@ -112,6 +114,18 @@ At that phase's checkpoint, the whole phase collapses to:
 -->
 
 ### Phase 1 — Core chat
+
+#### Feature 08 — Streaming responses on the shared key  *(2026-08-01)*
+
+- **`SHARED_MODEL_ID` had to change: Google 404s `gemini-2.5-flash` with "no longer available to new users"** — while still listing it from the models endpoint, so the catalog cannot be trusted as proof a model works. Replaced with `gemini-3.6-flash`, verified by a real `generateContent` call. Pinned rather than the `gemini-flash-latest` alias, which also works: this key is billed and F17 derives `estimated_usd` from a Flash rate card, so an alias that quietly moves to differently-priced weights makes that ledger wrong with nothing on screen to say so.
+- **`onAbort` gives you `steps` and nothing else, and a single-step generation stopped mid-flight has none.** Stopping with 1,250 characters on screen persisted an empty row — the invariant that an aborted stream keeps whatever arrived was silently broken. Fixed by accumulating deltas in `onChunk` (`chunk.type === 'text-delta'`, `chunk.text`) and writing that accumulator from both `onAbort` and `onError`. Re-measured: 369 characters on screen, 369 persisted, still there after a reload.
+- Decision: **the new conversation's id travels back as a transient data part**, caught by `useChat`'s `onData`, with `router.replace` correcting the URL once the response finishes. The server keeps id authority and F07's flat 404 for an id that is not yours survives — a client-minted id would have forced that 404 to become "create it".
+- Decision: **one `Chat` client component for both `/chat` and `/chat/[id]`.** They differ only in whether `conversationId` is null; splitting them would mean two streaming paths to keep in step. `use-send-message.ts` was deleted outright — `useChat` replaces it.
+- Decision: **`status` and `error_message` ride along as message metadata.** Mapping a row to a bare `UIMessage` drops them, so a failed answer would show its error state until the page reloaded and then come back looking ordinary.
+- v7 corrections found by reading the installed `.d.ts` rather than the docs, both now fixed in `architecture.md` and `library-docs.md`: **`onFinish` is a deprecated alias for `onEnd`**, and the route example **passed stale history** — loading messages, appending the user row, then handing the model everything except the message being answered. Silent, because the model still replies, just to the wrong thing.
+- Gotcha: **Turbopack did not hot-reload the route handler.** Two rounds of "the fix does not work" were a stale module — zero diagnostic output from code that was definitely on disk. Restarting `pnpm dev` made the same code work first time. Restart the dev server before believing a server-side change had no effect.
+- Gotcha: Gemini 3.x spends its first seconds on reasoning tokens, so a stop pressed early catches nothing to save. Test the abort path by waiting for visible answer text, not for the stop button to appear.
+- Verified: 58 tests green, the shared-model guard falsified before being trusted. In the browser, against real Gemini: **14 DOM updates across 11 distinct lengths over 13.4 seconds**, which is what proves it streams rather than arriving in one block; the URL correcting from `/chat` to `/chat/<id>` and the sidebar picking it up; a follow-up message with no navigation; stop ending generation with the partial answer persisted and re-rendered with `message-error` styling (`#d8735e` border on `#383330`) after a reload; assistant rows moving `streaming → complete` with real token counts and `used_shared_key = true`. The error path was verified for free by the model 404 before the id was fixed — it rendered inline without blanking the thread.
 
 #### Feature 07 — New conversation and composer  *(2026-08-01)*
 
