@@ -878,8 +878,19 @@ it('issues no more than the daily allowance under concurrent load', async () => 
 
 ## Playwright
 
-**Check first:** Context7 → `/microsoft/playwright`. A Playwright MCP server is
-also available for interactive debugging of a running app.
+**Check first:** Context7 → `/microsoft/playwright`.
+
+**For interactive debugging, use the `playwright-cli` skill.** The Playwright MCP
+server this section used to point at has been removed and replaced by it. The
+distinction that matters: the CLI drives a browser *now*, at any feature, to
+confirm something renders; `@playwright/test` and the `e2e/` suite below are a
+project dependency that still arrives at **feature 36**. Using the CLI must not
+add the package, a `playwright.config.ts`, or an `e2e/` folder ahead of that.
+
+Because sign-in is Google OAuth only, an unauthenticated browser is redirected
+to `/` before it ever reaches the app. Open with `--persistent --profile`
+against a profile that is already signed in, or `state-load` a session saved
+earlier — the same problem the `storageState` rule below solves for the specs.
 
 **Rules:**
 

@@ -96,4 +96,6 @@ them to work:
 - **Supabase MCP** — read the live schema, apply migrations, run security advisors, generate types. Prefer it over hand-writing SQL blind.
 - **`supabase` skill** — Supabase development and security guidance.
 - **`supabase-postgres-best-practices` skill** — read before writing indexes, RLS policies, or anything performance-sensitive in Postgres.
-- **Playwright MCP** — drive a running browser when debugging the app interactively.
+- **`playwright-cli` skill** — drive a real browser to see a change working: `open`, `goto`, `snapshot`, `click`, `resize`, `--device` emulation. This replaced the Playwright MCP server, which is gone. Reach for it whenever a feature can only be confirmed by looking at it — a UI feature verified only by `pnpm test` is not verified, because `vitest.config.ts` matches `tests/**/*.test.ts` in a node environment and can see nothing rendered.
+
+  Two things to know before using it here. Sign-in is Google OAuth only, so an unauthenticated browser gets bounced to `/` — open with `--persistent --profile` against a signed-in profile, or `state-load` a saved session. And this is a **debugging tool, not a project dependency**: `@playwright/test`, `playwright.config.ts`, and `e2e/` all still arrive at feature 36, and using the CLI now must not add any of them.
