@@ -8,6 +8,12 @@
 
 import { z } from 'zod'
 
+import {
+  PROVIDER_KEY_LABEL_MAX_LENGTH,
+  PROVIDER_KEY_MAX_LENGTH,
+  PROVIDER_KEY_MIN_LENGTH,
+} from '@/lib/constants'
+
 /** Mirrors the `provider` Postgres enum. */
 export const providerSchema = z.enum(['openai', 'anthropic', 'google', 'openrouter'])
 
@@ -66,3 +72,39 @@ export const titleRequestSchema = z.object({
 })
 
 export type TitleRequest = z.infer<typeof titleRequestSchema>
+
+/**
+ * The body of `POST /api/keys`.
+ *
+ * `apiKey` is bounded on both ends, and neither bound is validation — the probe
+ * in `src/server/keys.ts` is what decides whether a key is real. The cap is the
+ * denial-of-service guard every string field here carries; the floor rejects an
+ * empty or obviously truncated paste without spending a network round trip on
+ * it.
+ *
+ * A parse failure on this route must never echo the submitted values back, the
+ * way a zod error detail would. The route returns a bare `invalid_input` and
+ * logs the detail server-side — reflecting an API key in a 400 response body
+ * would defeat the point of the whole feature.
+ */
+export const createKeySchema = z.object({
+  provider: providerSchema,
+  apiKey: z
+    .string()
+    .min(PROVIDER_KEY_MIN_LENGTH)
+    .max(PROVIDER_KEY_MAX_LENGTH),
+  label: z.string().max(PROVIDER_KEY_LABEL_MAX_LENGTH).optional(),
+})
+
+export type CreateKeyInput = z.infer<typeof createKeySchema>
+
+/**
+ * The query of `DELETE /api/keys?provider=…`.
+ *
+ * A query parameter rather than a body: `build-plan.md` puts both verbs in one
+ * `route.ts`, and a body on DELETE is legal but poorly supported by enough
+ * intermediaries to be worth avoiding for a single enum value.
+ */
+export const deleteKeySchema = z.object({
+  provider: providerSchema,
+})

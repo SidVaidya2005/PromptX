@@ -46,6 +46,20 @@ export type ConversationGroup = {
 export type ConversationGroupLabel = 'Pinned' | 'Today' | 'Previous 7 days' | 'Older'
 
 /**
+ * What the settings page may know about a stored key.
+ *
+ * Narrower than the row, and the narrowing is the security boundary rather than
+ * a payload optimisation. `ciphertext`, `iv`, and `auth_tag` are deliberately
+ * absent: RLS is row-level, so an owner *can* read their own ciphertext through
+ * PostgREST — what keeps it off the wire is that the application never selects
+ * it. `last_four` is the only key material permitted to leave the server.
+ */
+export type ProviderKeySummary = Pick<
+  Tables<'provider_keys'>,
+  'provider' | 'last_four' | 'label' | 'created_at'
+>
+
+/**
  * What the shell needs to render a person, resolved once on the server.
  *
  * Deliberately not the whole `Profile` row: the components under

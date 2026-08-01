@@ -7,6 +7,8 @@
  * or SHARED_GEMINI_API_KEY — those live in src/server/env.ts.
  */
 
+import type { Provider } from '@/types/domain'
+
 /**
  * Reads a NEXT_PUBLIC_ variable, failing loudly rather than shipping `undefined`.
  *
@@ -71,6 +73,46 @@ export const SITE_URL = requiredPublicEnv(
  * call, not by reading the catalog.
  */
 export const SHARED_MODEL_ID = 'gemini-3.6-flash' as const
+
+/**
+ * How each provider is named in the interface.
+ *
+ * Keyed by the Postgres enum so adding a provider to the enum without naming it
+ * here is a type error rather than a blank row. Feature 14 may fold this into
+ * the model catalog; until that file exists, this is the one place a provider
+ * has a human name.
+ */
+export const PROVIDER_LABELS: Record<Provider, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  openrouter: 'OpenRouter',
+}
+
+/**
+ * Bounds on a submitted provider key, before it is probed.
+ *
+ * A cheap shape check, not validation — the probe is what decides whether a key
+ * is real. The cap exists because an unbounded string on a public route is a
+ * denial-of-service vector; the floor rejects an obviously empty paste without
+ * a network round trip.
+ */
+export const PROVIDER_KEY_MIN_LENGTH = 20
+export const PROVIDER_KEY_MAX_LENGTH = 300
+
+/** Optional user-supplied name for a stored key. */
+export const PROVIDER_KEY_LABEL_MAX_LENGTH = 60
+
+/**
+ * Hard ceiling on the pre-storage probe of a provider key.
+ *
+ * Deliberately not STREAM_TIMEOUT_MS. Two minutes is the right bound for a
+ * stream someone is watching arrive; for a HEAD-shaped liveness check that a
+ * person is actively waiting on, holding the request that long is just a form
+ * of hanging. Exceeding this is reported as "could not verify", never as
+ * "your key is wrong".
+ */
+export const KEY_PROBE_TIMEOUT_MS = 10 * 1000
 
 /**
  * Per-user shared-key allowance, resetting at 00:00 UTC.
