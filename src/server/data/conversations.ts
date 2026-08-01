@@ -2,7 +2,7 @@ import 'server-only'
 
 import { createServerSupabaseClient } from '@/server/supabase'
 
-import type { ConversationSummary } from '@/types/domain'
+import type { Conversation, ConversationSummary, Provider } from '@/types/domain'
 
 /**
  * The caller's conversations for the sidebar, newest activity first.
@@ -35,4 +35,92 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   }
 
   return data
+}
+
+/** One conversation, or null when it does not exist or is not owned by the caller. */
+export async function getConversation(id: string): Promise<Conversation | null> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] getConversation failed', error)
+    throw new Error('Failed to load conversation')
+  }
+
+  return data
+}
+
+/**
+ * Creates an empty conversation and returns its id.
+ *
+ * Called only when a message is actually being sent — never when the composer
+ * loads — so abandoning a draft leaves nothing behind. The title is left at the
+ * column default of 'New chat'; feature 10 replaces it from the first exchange.
+ */
+export async function createConversation(
+  userId: string,
+  model: { provider: Provider; modelId: string },
+): Promise<string> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .insert({
+      user_id: userId,
+      provider: model.provider,
+      model_id: model.modelId,
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('[data/conversations] createConversation failed', error)
+    throw new Error('Failed to create conversation')
+  }
+
+  return data.id
+}
+
+/**
+ * Marks a conversation as just-used.
+ *
+ * Load-bearing rather than bookkeeping: there is no trigger on
+ * `conversations.updated_at`, and the sidebar orders on it. Skip this and every
+ * conversation keeps its creation time forever — the list silently stops
+ * reflecting activity, with nothing to indicate why.
+ */
+export async function touchConversation(id: string): Promise<void> {
+  const supabase = await createServerSupabaseClient()
+
+  const { error } = await supabase
+    .from('conversations')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', id)
+
+  if (error) {
+    console.error('[data/conversations] touchConversation failed', error)
+    throw new Error('Failed to update conversation')
+  }
+}
+
+/**
+ * Deletes a conversation. Messages and attachments follow by `on delete cascade`.
+ *
+ * Used here only to undo a conversation whose first message failed to save.
+ * Feature 11 builds the sidebar action on top of it.
+ */
+export async function deleteConversation(id: string): Promise<void> {
+  const supabase = await createServerSupabaseClient()
+
+  const { error } = await supabase.from('conversations').delete().eq('id', id)
+
+  if (error) {
+    console.error('[data/conversations] deleteConversation failed', error)
+    throw new Error('Failed to delete conversation')
+  }
 }

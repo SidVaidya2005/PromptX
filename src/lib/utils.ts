@@ -65,13 +65,36 @@ export function cn(...inputs: ClassValue[]): string {
  * be an open redirect that arrives carrying a freshly minted session, which is
  * why this is a guard rather than a convenience.
  */
-export function safeRedirectPath(target: string | null | undefined, fallback: string): string {
+export function safeRedirectPath(
+  target: string | null | undefined,
+  fallback: string,
+): string {
   if (!target) return fallback
 
   const isSameSitePath =
     target.startsWith('/') && !target.startsWith('//') && !target.startsWith('/\\')
 
   return isSameSitePath ? target : fallback
+}
+
+/**
+ * The plain text of a UI message.
+ *
+ * A message is a list of parts, not a string — `message.content` does not exist
+ * in AI SDK v5 and later. Parts can be text, reasoning, or files, and only the
+ * text ones belong in `messages.content`, so the rest are dropped rather than
+ * stringified into the column that feeds full-text search.
+ *
+ * Typed structurally rather than against `ChatRequestMessage`, so feature 08 can
+ * hand it a real `UIMessage` without a cast.
+ */
+export function textOf(message: {
+  parts: ReadonlyArray<{ type: string; text?: string | undefined }>
+}): string {
+  return message.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text ?? '')
+    .join('')
 }
 
 /**

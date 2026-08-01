@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { initialOf, resolveDisplayName, safeRedirectPath } from '@/lib/utils'
+import { initialOf, resolveDisplayName, safeRedirectPath, textOf } from '@/lib/utils'
 
 /**
  * safeRedirectPath guards /auth/callback, which redirects while handing over a
@@ -62,6 +62,47 @@ describe('resolveDisplayName', () => {
   it('survives an address with no local part', () => {
     expect(resolveDisplayName(null, '@example.com')).toBe('@example.com')
     expect(resolveDisplayName(null, '')).toBe('')
+  })
+})
+
+/**
+ * textOf decides what lands in messages.content, which is also what the
+ * generated search_vector indexes. A part type that leaks in here is a part
+ * type that becomes searchable text.
+ */
+describe('textOf', () => {
+  it('returns the text of a single-part message', () => {
+    expect(textOf({ parts: [{ type: 'text', text: 'Explain RLS' }] })).toBe('Explain RLS')
+  })
+
+  it('joins consecutive text parts without inserting separators', () => {
+    // Streamed text arrives as contiguous chunks of one message, so a join
+    // character here would appear inside words.
+    expect(
+      textOf({
+        parts: [
+          { type: 'text', text: 'Explain ' },
+          { type: 'text', text: 'RLS' },
+        ],
+      }),
+    ).toBe('Explain RLS')
+  })
+
+  it('drops every part that is not text', () => {
+    expect(
+      textOf({
+        parts: [
+          { type: 'reasoning', text: 'thinking out loud' },
+          { type: 'text', text: 'the answer' },
+          { type: 'file' },
+        ],
+      }),
+    ).toBe('the answer')
+  })
+
+  it('returns an empty string when there is no text at all', () => {
+    expect(textOf({ parts: [] })).toBe('')
+    expect(textOf({ parts: [{ type: 'file' }] })).toBe('')
   })
 })
 

@@ -7,11 +7,22 @@
  * application needs on top of them.
  */
 
-import type { Tables } from '@/types/database'
+import type { Enums, Tables } from '@/types/database'
+
+/**
+ * The Postgres enums, aliased rather than restated. `code-standards.md` forbids
+ * redeclaring a union of string literals that duplicates a database enum —
+ * these stay correct through a migration, a hand-written union would not.
+ */
+export type Provider = Enums<'provider'>
+export type MessageRole = Enums<'message_role'>
+export type MessageStatus = Enums<'message_status'>
 
 export type Profile = Tables<'profiles'>
 
 export type Conversation = Tables<'conversations'>
+
+export type Message = Tables<'messages'>
 
 /**
  * The columns the sidebar actually renders.
