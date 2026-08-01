@@ -56,6 +56,67 @@ export async function appendMessage(input: AppendMessageInput): Promise<string> 
 }
 
 /**
+ * Marks a streaming assistant message as finished.
+ *
+ * Targeted by primary key, never "the most recent message" — at the moment a
+ * stream ends the newest row may not be the one that was streaming.
+ *
+ * Token counts are whatever the provider reported and may be undefined; they
+ * are stored as null rather than guessed. Feature 17's circuit breaker is fed
+ * by measured usage only, and an estimate that enters that ledger trips the
+ * breaker for everyone on invented numbers.
+ */
+export async function completeMessage(
+  id: string,
+  result: { content: string; inputTokens?: number; outputTokens?: number },
+): Promise<void> {
+  const supabase = await createServerSupabaseClient()
+
+  const { error } = await supabase
+    .from('messages')
+    .update({
+      content: result.content,
+      input_tokens: result.inputTokens ?? null,
+      output_tokens: result.outputTokens ?? null,
+      status: 'complete',
+    })
+    .eq('id', id)
+
+  if (error) {
+    console.error('[data/messages] completeMessage failed', error)
+    throw new Error('Failed to save the response')
+  }
+}
+
+/**
+ * Marks a streaming assistant message as failed, keeping whatever arrived.
+ *
+ * The row is updated, never deleted. A response that broke halfway is still
+ * something the person watched appear, and a thread where it silently vanishes
+ * is harder to make sense of than one that says what happened.
+ */
+export async function failMessage(
+  id: string,
+  result: { content: string; errorMessage: string },
+): Promise<void> {
+  const supabase = await createServerSupabaseClient()
+
+  const { error } = await supabase
+    .from('messages')
+    .update({
+      content: result.content,
+      status: 'error',
+      error_message: result.errorMessage,
+    })
+    .eq('id', id)
+
+  if (error) {
+    console.error('[data/messages] failMessage failed', error)
+    throw new Error('Failed to record the error')
+  }
+}
+
+/**
  * Every message in a conversation, oldest first.
  *
  * Ordered by `created_at` to match `messages_thread_idx`. RLS restricts the scan

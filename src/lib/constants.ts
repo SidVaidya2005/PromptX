@@ -56,8 +56,21 @@ export const SITE_URL = requiredPublicEnv(
   process.env.NEXT_PUBLIC_SITE_URL,
 )
 
-/** The model served by the shared key. Nothing else is available without a personal key. */
-export const SHARED_MODEL_ID = 'gemini-2.5-flash' as const
+/**
+ * The model served by the shared key. Nothing else is available without a
+ * personal key.
+ *
+ * Pinned to a version rather than the `gemini-flash-latest` alias, which also
+ * works. This key is billed, and feature 17 derives `estimated_usd` from a
+ * Flash rate card — an alias that silently moves to a differently-priced model
+ * makes that ledger wrong with nothing on screen to say so.
+ *
+ * `gemini-2.5-flash` was the original choice and had to be replaced: Google
+ * returns 404 "no longer available to new users" for it, while still listing it
+ * from the models endpoint. Verify a replacement with a real generateContent
+ * call, not by reading the catalog.
+ */
+export const SHARED_MODEL_ID = 'gemini-3.6-flash' as const
 
 /**
  * Per-user shared-key allowance, resetting at 00:00 UTC.
