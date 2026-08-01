@@ -179,6 +179,78 @@ describe('a signed-in user reading their own data', () => {
   })
 })
 
+/**
+ * The other half of "cannot delete someone else's", and the half that was
+ * missing. A policy that refuses everyone refuses attackers too, so the negative
+ * tests below would still pass with the owner's delete policy broken — and every
+ * delete in the application would 404, since feature 11's route reports "no row
+ * went" as not-found.
+ *
+ * Both tests seed their own throwaway conversation rather than destroying the
+ * shared fixture the rest of this file asserts against.
+ */
+describe('deleting a conversation you own', () => {
+  async function seedConversation(): Promise<{ id: string; messageId: string }> {
+    const { data: conversation, error: conversationError } = await admin
+      .from('conversations')
+      .insert({
+        user_id: alice.id,
+        title: 'doomed',
+        provider: 'google',
+        model_id: 'gemini-3.6-flash',
+      })
+      .select('id')
+      .single()
+
+    if (conversationError) throw conversationError
+
+    const { data: message, error: messageError } = await admin
+      .from('messages')
+      .insert({
+        conversation_id: conversation.id,
+        user_id: alice.id,
+        role: 'user',
+        content: 'about to be cascaded',
+      })
+      .select('id')
+      .single()
+
+    if (messageError) throw messageError
+
+    return { id: conversation.id, messageId: message.id }
+  }
+
+  it('removes the row and reports that it did', async () => {
+    const { id } = await seedConversation()
+
+    // `.select()` after `.delete()` is what feature 11's data module relies on
+    // to tell a real delete from an RLS no-op. If the owner policy regressed,
+    // this returns [] and the route would answer 404 for every delete.
+    const { data } = await alice.client
+      .from('conversations')
+      .delete()
+      .eq('id', id)
+      .select('id')
+
+    expect(data).toEqual([{ id }])
+  })
+
+  it('takes the conversation’s messages with it', async () => {
+    const { id, messageId } = await seedConversation()
+
+    await alice.client.from('conversations').delete().eq('id', id)
+
+    // Checked past RLS: the cascade is a schema guarantee, and feature 11
+    // deletes messages by relying on it rather than by sweeping them itself.
+    const { count } = await admin
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('id', messageId)
+
+    expect(count).toBe(0)
+  })
+})
+
 describe('a signed-in user reaching for another user’s rows', () => {
   it('cannot read a conversation by its id', async () => {
     const { data } = await alice.client

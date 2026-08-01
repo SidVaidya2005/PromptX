@@ -144,16 +144,29 @@ export async function setGeneratedTitle(id: string, title: string): Promise<bool
 /**
  * Deletes a conversation. Messages and attachments follow by `on delete cascade`.
  *
- * Used here only to undo a conversation whose first message failed to save.
- * Feature 11 builds the sidebar action on top of it.
+ * Returns whether a row actually went. The distinction matters because RLS makes
+ * someone else's conversation invisible rather than forbidden — the delete
+ * simply matches nothing and reports no error, which is indistinguishable from
+ * success unless the row count comes back. `.select()` after `.delete()` returns
+ * the deleted rows, so this is one round trip rather than a read-then-delete.
+ *
+ * Note the cascade reaches attachment *rows* but not their storage objects,
+ * which SQL cannot touch. Feature 28's reaper sweeps objects whose row is gone.
  */
-export async function deleteConversation(id: string): Promise<void> {
+export async function deleteConversation(id: string): Promise<boolean> {
   const supabase = await createServerSupabaseClient()
 
-  const { error } = await supabase.from('conversations').delete().eq('id', id)
+  const { data, error } = await supabase
+    .from('conversations')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
 
   if (error) {
     console.error('[data/conversations] deleteConversation failed', error)
     throw new Error('Failed to delete conversation')
   }
+
+  return data !== null
 }
