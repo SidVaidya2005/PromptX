@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server'
-import { revalidatePath } from 'next/cache'
 
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  streamText,
+  toUIMessageStream,
+  type UIMessage,
+} from 'ai'
+
+import { STREAM_TIMEOUT_MS } from '@/lib/constants'
 import { chatRequestSchema } from '@/lib/schemas'
+import { toUIMessages } from '@/lib/messages'
 import { textOf } from '@/lib/utils'
 
 import { getUser } from '@/server/auth'
@@ -11,7 +21,13 @@ import {
   getConversation,
   touchConversation,
 } from '@/server/data/conversations'
-import { appendMessage } from '@/server/data/messages'
+import {
+  appendMessage,
+  completeMessage,
+  failMessage,
+  listByConversation,
+} from '@/server/data/messages'
+import { MissingKeyError, resolveModel } from '@/server/providers'
 
 /**
  * Documents intent. On Render every route is Node already, so nothing can
@@ -21,27 +37,27 @@ import { appendMessage } from '@/server/data/messages'
 export const runtime = 'nodejs'
 
 /**
- * Sends a message.
+ * Sends a message and streams the answer back.
  *
- * At this feature the request stops at persistence — no provider is contacted
- * and nothing streams. Feature 08 adds that, and the shape here is built to be
- * extended rather than replaced: see the marker below.
+ * Two orderings in here are doing real work.
  *
- * Conversation creation lives here rather than in a separate endpoint for one
- * reason. Once feature 16 can refuse a request on quota, the refusal must leave
- * no trace — no dangling prompt, and no empty "New chat" in the sidebar either.
- * That is only true while the same handler owns both the refusal and the
- * creation.
+ * **Nothing is written until the request is certain to reach a provider.**
+ * resolveModel() comes before the first insert, so a refusal — a missing key
+ * now, a spent daily allowance at feature 16, a tripped breaker at feature 17 —
+ * leaves no dangling prompt and no empty conversation. That is also why
+ * conversation creation lives in this handler rather than its own endpoint.
+ *
+ * **The assistant row is created up front in `streaming` status**, and its id is
+ * held for the life of the stream. Without it there is no stable row to update
+ * on failure: at that moment the newest message is the *user's*, so any
+ * "mark the last message errored" logic would mark the prompt as failed.
  */
 export async function POST(request: Request) {
-  // 1. Authenticate. Always first, always before parsing.
   const user = await getUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // 2. Validate. The zod detail is logged, never returned — it echoes the
-  //    submitted values back, which on /api/keys would mean an API key.
   const parsed = chatRequestSchema.safeParse(await request.json())
   if (!parsed.success) {
     console.error('[api/chat] invalid request', parsed.error)
@@ -71,20 +87,42 @@ export async function POST(request: Request) {
     }
   }
 
-  // ── FEATURE 08 INSERTS resolveModel() AND THE QUOTA RESERVATION HERE ──
-  // Above every write, without exception. Nothing may be persisted until the
-  // request is certain to reach a provider, so that a 400, 429 or 503 leaves
-  // no half-made conversation and no prompt that never gets an answer.
+  let model
+  let usedSharedKey
+  try {
+    ;({ model, usedSharedKey } = await resolveModel(user.id, provider, modelId))
+  } catch (error) {
+    if (error instanceof MissingKeyError) {
+      return NextResponse.json(
+        { error: `No API key configured for ${error.provider}`, code: 'missing_key' },
+        { status: 400 },
+      )
+    }
+
+    console.error('[api/chat] could not resolve a model', error)
+    return NextResponse.json(
+      { error: 'Could not send message', code: 'internal_error' },
+      { status: 500 },
+    )
+  }
+
+  // ─────────── PAST THIS LINE THE REQUEST WILL REACH A PROVIDER ───────────
+  // Everything above can refuse, and every refusal above leaves the database
+  // exactly as it found it.
 
   let createdConversationId: string | null = null
+  let targetId: string
+  let assistantMessageId: string
+  let history: UIMessage[]
 
   try {
-    let targetId = conversationId
+    targetId =
+      conversationId ?? (await createConversation(user.id, { provider, modelId }))
+    if (!conversationId) createdConversationId = targetId
 
-    if (!targetId) {
-      targetId = await createConversation(user.id, { provider, modelId })
-      createdConversationId = targetId
-    }
+    // Loaded before the new row is written, then combined in memory. Re-reading
+    // afterwards would cost a second round trip for the same answer.
+    const priorMessages = conversationId ? await listByConversation(conversationId) : []
 
     await appendMessage({
       conversationId: targetId,
@@ -93,20 +131,28 @@ export async function POST(request: Request) {
       content: text,
     })
 
-    // Sorts the conversation to the top of the sidebar. No trigger maintains
-    // this column, so it is this call or nothing.
+    assistantMessageId = await appendMessage({
+      conversationId: targetId,
+      userId: user.id,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      provider,
+      modelId,
+      usedSharedKey,
+    })
+
     await touchConversation(targetId)
 
-    revalidatePath('/chat')
-
-    return NextResponse.json({ conversationId: targetId }, { status: 201 })
+    // The model must see the turn that was just written. Loading history and
+    // passing it unchanged would send everything EXCEPT the message being
+    // answered — the mistake architecture.md's example makes.
+    history = [...toUIMessages(priorMessages), message as UIMessage]
   } catch (error) {
-    console.error('[api/chat] send failed', error)
+    console.error('[api/chat] could not start the exchange', error)
 
     // PostgREST cannot span a transaction, so a conversation created a moment
-    // ago can outlive the message that justified it. Undo it rather than leave
-    // an empty "New chat" in the sidebar. Best-effort: if this fails too, the
-    // original error is still what the caller hears about.
+    // ago can outlive the message that justified it.
     if (createdConversationId) {
       try {
         await deleteConversation(createdConversationId)
@@ -120,4 +166,72 @@ export async function POST(request: Request) {
       { status: 500 },
     )
   }
+
+  /**
+   * Every text delta as it goes past, so an interrupted answer is not lost.
+   *
+   * `onAbort` receives only `steps`, and a single-step generation stopped
+   * mid-flight has no finished step in it — measured, not assumed: pressing
+   * stop with 1,250 characters on screen persisted an empty row. Whatever is
+   * on screen when someone stops has to survive a reload, so it is accumulated
+   * here rather than asked for at the end.
+   */
+  let streamedText = ''
+
+  const result = streamText({
+    model,
+    messages: await convertToModelMessages(history),
+    onChunk: ({ chunk }) => {
+      if (chunk.type === 'text-delta') streamedText += chunk.text
+    },
+    // Render will hold a request open for 100 minutes, so nothing in the
+    // platform ends a hung provider connection. This is the only thing that
+    // does. Composed with the request's own signal so pressing stop in the
+    // browser actually stops generation rather than just hiding it.
+    abortSignal: AbortSignal.any([
+      AbortSignal.timeout(STREAM_TIMEOUT_MS),
+      request.signal,
+    ]),
+    onEnd: async ({ text: answer, usage }) => {
+      await completeMessage(assistantMessageId, {
+        content: answer,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      })
+    },
+    onAbort: async () => {
+      await failMessage(assistantMessageId, {
+        content: streamedText,
+        errorMessage: 'Generation stopped',
+      })
+    },
+    onError: async ({ error }) => {
+      console.error('[api/chat] stream failed', error)
+      // Keeps whatever arrived before the failure, for the same reason.
+      await failMessage(assistantMessageId, {
+        content: streamedText,
+        errorMessage: 'The model could not finish this response.',
+      })
+    },
+  })
+
+  return createUIMessageStreamResponse({
+    stream: createUIMessageStream({
+      execute: ({ writer }) => {
+        // A brand-new conversation has no URL yet. The id goes out ahead of the
+        // first token as a transient part — transient so it never becomes a
+        // message in the thread — and the client corrects the URL once the
+        // response finishes.
+        if (createdConversationId) {
+          writer.write({
+            type: 'data-conversation',
+            data: { id: createdConversationId },
+            transient: true,
+          })
+        }
+
+        writer.merge(toUIMessageStream({ stream: result.stream }))
+      },
+    }),
+  })
 }
