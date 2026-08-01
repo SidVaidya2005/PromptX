@@ -140,7 +140,10 @@ export function AppShell({
             </Button>
           </header>
 
-          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+          {/* overflow-hidden, not auto: each page owns its own scrolling, which
+              is what lets the composer stay pinned to the bottom of the thread
+              column while the messages above it scroll. */}
+          <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
         </div>
 
         <div
