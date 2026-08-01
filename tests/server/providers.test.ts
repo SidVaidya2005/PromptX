@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { SHARED_MODEL_ID } from '@/lib/constants'
 
-import { MissingKeyError, resolveModel } from '@/server/providers'
+import { MissingKeyError, resolveModel, sharedTitleModel } from '@/server/providers'
 
 const USER_ID = '00000000-0000-4000-8000-000000000001'
 
@@ -48,5 +48,30 @@ describe('resolveModel', () => {
       provider: 'openai',
       name: 'MissingKeyError',
     })
+  })
+})
+
+/**
+ * Title generation is system overhead: it runs on the shared key, and it must
+ * never spend a user's daily allowance on a title they did not ask for.
+ *
+ * What enforces that is the signature, which is why it is worth an assertion.
+ * `resolveModel` takes a user id because feature 16 will reserve a slot against
+ * it; this takes none, so there is no one to charge and no way for the
+ * reservation to be added here by accident later.
+ */
+describe('sharedTitleModel', () => {
+  it('serves the shared model without a user to charge', () => {
+    expect(sharedTitleModel).toHaveLength(0)
+    expect(sharedTitleModel()).toBeDefined()
+  })
+
+  it('is a separate entry point from resolveModel', async () => {
+    // Not a style preference. Feature 16 inserts reserveSharedSlot() inside
+    // resolveModel, and if titling shared that path it would start costing every
+    // user one of twenty daily messages per conversation, silently.
+    const resolved = await resolveModel(USER_ID, 'google', SHARED_MODEL_ID)
+
+    expect(resolved.model).not.toBe(sharedTitleModel())
   })
 })

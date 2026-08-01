@@ -51,3 +51,18 @@ export type ChatRequest = z.infer<typeof chatRequestSchema>
 
 /** The newest turn, as the client sends it. */
 export type ChatRequestMessage = ChatRequest['message']
+
+/**
+ * The body of `POST /api/title`.
+ *
+ * Not nullable, unlike the chat route's: titling names a conversation that
+ * already exists and has already been answered once. There is nothing here for
+ * the model to be told — what to title from is read server-side from the thread,
+ * for the same reason history is, so a client cannot choose the words its own
+ * conversation is named after.
+ */
+export const titleRequestSchema = z.object({
+  conversationId: z.uuid(),
+})
+
+export type TitleRequest = z.infer<typeof titleRequestSchema>

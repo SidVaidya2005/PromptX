@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { DEFAULT_CONVERSATION_TITLE } from '@/lib/constants'
+
 import { createServerSupabaseClient } from '@/server/supabase'
 
 import type { Conversation, ConversationSummary, Provider } from '@/types/domain'
@@ -106,6 +108,37 @@ export async function touchConversation(id: string): Promise<void> {
     console.error('[data/conversations] touchConversation failed', error)
     throw new Error('Failed to update conversation')
   }
+}
+
+/**
+ * Names a conversation, but only while it is still called 'New chat'.
+ *
+ * The `.eq('title', …)` is a guard, not a filter, and it is why this returns a
+ * boolean. Auto-titling runs from a fire-and-forget request after the stream
+ * closes, so the row can move underneath it — the user renames the conversation
+ * (feature 21), or a duplicated request arrives. Making the condition part of
+ * the statement means the database decides, once, rather than a read-then-write
+ * in the caller deciding on data that was true a moment ago.
+ *
+ * Returns true when this call is the one that named it.
+ */
+export async function setGeneratedTitle(id: string, title: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ title })
+    .eq('id', id)
+    .eq('title', DEFAULT_CONVERSATION_TITLE)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] setGeneratedTitle failed', error)
+    throw new Error('Failed to save the title')
+  }
+
+  return data !== null
 }
 
 /**

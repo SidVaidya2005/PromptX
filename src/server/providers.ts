@@ -57,6 +57,29 @@ export async function resolveModel(
   }
 }
 
+/**
+ * The shared model, for system overhead rather than for a user's message.
+ *
+ * Deliberately NOT `resolveModel()`, and the separation is the whole point.
+ * Line 45 above is where feature 16 inserts `reserveSharedSlot()` — route
+ * titling through there and the day that lands, every conversation silently
+ * costs its owner one of twenty daily messages for a title they never asked
+ * for. Nothing on screen would say so. A second entry point cannot drift into
+ * claiming a slot, because there is no slot logic on this path to begin with.
+ *
+ * It still lives in this file rather than in the caller, because
+ * `SHARED_GEMINI_API_KEY` is read here and nowhere else.
+ *
+ * FEATURE 17: the tokens this model spends are real money and belong in
+ * `shared_key_budget`. The ledger, the service-role client, and
+ * `record_shared_tokens` all arrive with `src/server/quota.ts` at that feature —
+ * see the reconciliation note in `src/server/titles.ts`. What must never be
+ * added is `reserveSharedSlot()`: accounted, not charged.
+ */
+export function sharedTitleModel(): LanguageModel {
+  return createGoogle({ apiKey: serverEnv.SHARED_GEMINI_API_KEY })(SHARED_MODEL_ID)
+}
+
 /** Thrown when a provider is selected that the caller has no key for. Maps to 400. */
 export class MissingKeyError extends Error {
   constructor(readonly provider: Provider) {

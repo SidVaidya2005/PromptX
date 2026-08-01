@@ -132,6 +132,37 @@ export const SEARCH_RESULT_LIMIT = 30
 export const MAX_TITLE_LENGTH = 60
 
 /**
+ * The title every conversation starts with, matching the column default in
+ * `20260731065201_enums_and_tables.sql`.
+ *
+ * Named here because auto-titling gates on it: a conversation is titled only
+ * while its title is still this string. That one comparison is also what stops
+ * feature 21's manual rename from being overwritten — a renamed conversation is
+ * no longer 'New chat', so the generator skips it without needing a column to
+ * record the fact.
+ */
+export const DEFAULT_CONVERSATION_TITLE = 'New chat'
+
+/**
+ * Hard ceiling on the title generation call.
+ *
+ * Deliberately not STREAM_TIMEOUT_MS. Two minutes is the right bound for an
+ * answer someone is reading as it arrives; for six words nobody is waiting on,
+ * it just holds a connection open. Titling is best-effort — giving up early
+ * costs a title, and the conversation keeps 'New chat'.
+ */
+export const TITLE_TIMEOUT_MS = 15 * 1000
+
+/**
+ * How much of each side of the first exchange is sent to the titling model.
+ *
+ * The shared key is billed, so feeding a 5,000-token code answer through it to
+ * produce a six-word title is money spent on tokens that cannot change the
+ * result — a response states its subject in its opening lines, not its last.
+ */
+export const TITLE_SOURCE_CHAR_LIMIT = 500
+
+/**
  * Where the shell's collapse preferences live.
  *
  * A cookie rather than localStorage, and the difference is visible. The (app)

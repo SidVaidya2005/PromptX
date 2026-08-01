@@ -38,3 +38,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright-cli scratch output — snapshots and console logs written by the
+# browser debugging skill every time a UI feature is verified. Not the e2e
+# suite, which arrives at feature 36 and lives in e2e/.
+.playwright-cli/
