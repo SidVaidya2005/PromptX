@@ -1,9 +1,8 @@
 import { cn } from '@/lib/utils'
-
-import type { Message } from '@/types/domain'
+import type { ChatMessage } from '@/lib/messages'
 
 type MessageBubbleProps = {
-  message: Message
+  message: ChatMessage
 }
 
 /**
@@ -19,6 +18,12 @@ type MessageBubbleProps = {
  */
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user'
+  const failed = message.metadata?.status === 'error'
+
+  const text = message.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('')
 
   return (
     <div className={cn('flex', isUser && 'justify-end')}>
@@ -28,9 +33,19 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           isUser
             ? 'max-w-4/5 rounded-md border border-hairline bg-canvas-soft px-lg py-md text-body-md text-ink'
             : 'w-full py-lg text-body-md text-body-strong',
+          // DESIGN.md `message-error`. Applied to the container rather than
+          // replacing it, so whatever partial content arrived stays readable
+          // above the explanation.
+          failed && 'rounded-md border border-danger bg-canvas-soft px-lg py-md',
         )}
       >
-        {message.content}
+        {text}
+
+        {failed && (
+          <p className={cn('text-body-sm text-danger', text && 'pt-sm')}>
+            {message.metadata?.errorMessage ?? 'This response did not finish.'}
+          </p>
+        )}
       </div>
     </div>
   )

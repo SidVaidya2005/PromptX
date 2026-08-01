@@ -1,10 +1,11 @@
 import { notFound } from 'next/navigation'
 
+import { toUIMessages } from '@/lib/messages'
+
 import { getConversation } from '@/server/data/conversations'
 import { listByConversation } from '@/server/data/messages'
 
-import { Composer } from '@/components/chat/Composer'
-import { Thread } from '@/components/chat/Thread'
+import { Chat } from '@/components/chat/Chat'
 
 type ConversationPageProps = {
   params: Promise<{ id: string }>
@@ -21,9 +22,6 @@ type ConversationPageProps = {
  * belongs to someone else, because RLS filters the row before this code sees
  * it. Both cases are a 404, which is the correct answer to each: confirming
  * that an id exists but is not yours is itself a disclosure.
- *
- * The column owns its own scrolling — the shell's <main> is overflow-hidden —
- * so the composer stays pinned to the bottom while the thread scrolls behind it.
  */
 export default async function ConversationPage({ params }: ConversationPageProps) {
   const { id } = await params
@@ -34,16 +32,11 @@ export default async function ConversationPage({ params }: ConversationPageProps
   const messages = await listByConversation(id)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <Thread messages={messages} />
-      </div>
-
-      <Composer
-        conversationId={conversation.id}
-        provider={conversation.provider}
-        modelId={conversation.model_id}
-      />
-    </div>
+    <Chat
+      conversationId={conversation.id}
+      initialMessages={toUIMessages(messages)}
+      provider={conversation.provider}
+      modelId={conversation.model_id}
+    />
   )
 }

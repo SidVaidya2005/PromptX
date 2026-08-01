@@ -2,48 +2,38 @@
 
 import { useRef, useState } from 'react'
 
-import { ArrowUpIcon } from 'lucide-react'
+import { ArrowUpIcon, SquareIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/components/chat/use-send-message'
-
-import type { Provider } from '@/types/domain'
 
 type ComposerProps = {
-  /** Null on /chat. The conversation is created by the first send, not by this mount. */
-  conversationId: string | null
-  provider: Provider
   modelId: string
+  isStreaming: boolean
+  onSend: (text: string) => void
+  onStop: () => void
 }
 
 /**
  * The message input, shared by /chat and /chat/[id].
  *
- * Nothing streams yet, so "disabled while streaming" is for now "disabled while
- * the request is in flight". Feature 08 turns the send button into a stop
- * button for the duration of a response.
+ * Controlled from above: it owns the draft and nothing else. Sending, stopping
+ * and the conversation's identity all belong to Chat, which owns the useChat
+ * instance — this file would otherwise need a second route to the same server.
  */
-export function Composer({ conversationId, provider, modelId }: ComposerProps) {
+export function Composer({ modelId, isStreaming, onSend, onStop }: ComposerProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { send, isPending, error } = useSendMessage()
 
-  const canSend = text.trim().length > 0 && !isPending
+  const canSend = text.trim().length > 0 && !isStreaming
 
-  async function submit() {
+  function submit() {
     if (!canSend) return
 
-    const sent = await send({ conversationId, text, provider, modelId })
-    // Only clear on success. A refusal must not cost the person their message.
-    if (sent) {
-      setText('')
-      resetHeight()
-    }
-  }
+    onSend(text)
+    setText('')
 
-  function resetHeight() {
     const textarea = textareaRef.current
     if (textarea) textarea.style.height = 'auto'
   }
@@ -65,7 +55,7 @@ export function Composer({ conversationId, provider, modelId }: ComposerProps) {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
 
     event.preventDefault()
-    void submit()
+    submit()
   }
 
   return (
@@ -73,7 +63,7 @@ export function Composer({ conversationId, provider, modelId }: ComposerProps) {
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          void submit()
+          submit()
         }}
         className={cn(
           // DESIGN.md `composer`: canvas-soft fill, hairline border, rounded-md,
@@ -103,23 +93,29 @@ export function Composer({ conversationId, provider, modelId }: ComposerProps) {
         />
 
         <div className="flex items-center justify-end gap-sm pt-xs">
-          <Button
-            type="submit"
-            variant="primary"
-            size="icon"
-            disabled={!canSend}
-            aria-label="Send message"
-          >
-            <ArrowUpIcon />
-          </Button>
+          {isStreaming ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onStop}
+              aria-label="Stop generating"
+            >
+              <SquareIcon />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              variant="primary"
+              size="icon"
+              disabled={!canSend}
+              aria-label="Send message"
+            >
+              <ArrowUpIcon />
+            </Button>
+          )}
         </div>
       </form>
-
-      {error && (
-        <p role="alert" className="pt-xs text-body-sm text-danger">
-          {error}
-        </p>
-      )}
     </div>
   )
 }
