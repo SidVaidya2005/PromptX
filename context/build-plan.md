@@ -285,6 +285,13 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - The response body contains `provider`, `lastFour`, `label`, and `createdAt`, and nothing else
 - Vitest asserting no route in the application returns a decrypted key
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **The probe is a free models-endpoint call, not a generation.** Zero tokens and no model id, which matters because the catalog does not exist until feature 14. It proves the key is real and authorised; it does not prove inference is enabled, which is the accepted gap
+- **Two probe failures, kept apart, both failing closed.** `401`/`403` → `400 invalid_key`; a timeout, a 5xx, or a network error → `503 probe_unavailable`. Neither writes a row. Collapsing them tells a user their correct key is wrong because a provider had a bad minute
+- **`bytea` is hex over PostgREST.** The conversion lives only in `src/server/data/provider-keys.ts`. Passing a `Buffer` to supabase-js silently stores `{"type":"Buffer",…}` and reports success — proven by mutation, not assumed
+- **This feature also built `/settings/account`**, which no feature in this plan owns. It is specified in `project-overview.md` ("profile details and sign-out") and built read-only to that line. **Editing `display_name` is still unbuilt and unassigned** — the data model calls the column editable and no feature specifies the path
+
 ### 14 Provider registry and model catalog
 
 **Logic:**

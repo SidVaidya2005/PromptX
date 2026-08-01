@@ -437,9 +437,18 @@ Created by an `on auth.user created` trigger, not by application code.
 | `id` | `uuid` PK | Default `gen_random_uuid()` |
 | `user_id` | `uuid` | Not null, indexed |
 | `provider` | `provider` | Not null |
-| `ciphertext` | `bytea` | Not null. AES-256-GCM output. **Never selected into a client response** |
+| `ciphertext` | `bytea` | Not null. AES-256-GCM output. **Never selected into a client response**. Hex on the wire — see below |
 | `iv` | `bytea` | Not null. 12 random bytes, unique per encryption |
 | `auth_tag` | `bytea` | Not null. 16 bytes |
+
+**All three are `bytea` in Postgres and hex strings over PostgREST.** There is no
+binary type in JSON, so PostgREST renders them as `\x…` — which is why the
+generated types say `string` rather than `Buffer`. `src/server/data/provider-keys.ts`
+is the only module that performs the conversion, and everything above it speaks
+`Buffer`, matching what `src/server/vault.ts` produces. Passing a `Buffer`
+straight to supabase-js is the trap: it does not throw, it stores
+`{"type":"Buffer","data":[…]}` as bytes and reports success, and the corruption
+only appears when something later tries to decrypt. (F13)
 | `last_four` | `text` | Not null. The only part of the key the UI ever displays |
 | `label` | `text` | Optional user-supplied name |
 | `created_at` | `timestamptz` | Default `now()` |
