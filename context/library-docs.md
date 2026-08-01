@@ -567,51 +567,87 @@ const buttonVariants = cva(
 
 ### Rendering an assistant message
 
+Fenced code is intercepted at `pre`, not at `code`. This is the part every
+example online gets wrong, including the one that used to be in this file:
+branching on `className` inside `code` only sees a fence that named its
+language. A bare ```` ``` ```` fence arrives with no class at all, falls to the
+inline branch, and renders as inline code in the middle of a paragraph. Reading
+the hast node instead catches both, and replacing `pre` avoids nesting the code
+block's `<div>` inside a `<pre>` — which is invalid HTML and warns in React.
+
 ```tsx
-// src/components/chat/markdown-message.tsx
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+// src/components/chat/MarkdownMessage.tsx
+<Markdown
+  remarkPlugins={[remarkGfm]}
+  components={{
+    pre({ node, children }) {
+      const fence = readFence(node) // pulls text + `language-x` off the <code> child
+      if (!fence) return <>{children}</>
 
-export function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...props }) {
-          const language = /language-(\w+)/.exec(className ?? '')?.[1]
-
-          return language ? (
-            <CodeBlock language={language} code={String(children).trimEnd()} />
-          ) : (
-            <code className="rounded-xs bg-canvas-soft px-xs py-xxs font-mono text-[13px]" {...props}>
-              {children}
-            </code>
-          )
-        },
-        a({ children, ...props }) {
-          return (
-            <a {...props} target="_blank" rel="noopener noreferrer"
-               className="text-ink underline underline-offset-2 hover:text-body-strong">
-              {children}
-            </a>
-          )
-        },
-      }}
-    >
-      {content}
-    </Markdown>
-  )
-}
+      return <CodeBlock code={fence.code} language={fence.language} isStreaming={isStreaming} />
+    },
+    // Only inline code reaches this now — `pre` above never renders its children
+    // for a fence, so no branch is needed here.
+    code({ children, ...props }) {
+      return <code {...props} className="rounded-xs bg-canvas-soft px-xs py-xxs font-mono text-code text-ink">{children}</code>
+    },
+    a({ children, ...props }) {
+      return (
+        <a {...props} target="_blank" rel="noopener noreferrer"
+           className="text-ink underline underline-offset-2 hover:text-body-strong">
+          {children}
+        </a>
+      )
+    },
+  }}
+>
+  {content}
+</Markdown>
 ```
+
+Everything else markdown produces — headings, lists, tables, blockquotes — is
+styled by `.markdown-body` in `globals.css` rather than by a `components` entry.
+Only these three carry behaviour, and writing the other fifteen as near-identical
+Tailwind strings buries them.
+
+### Highlighting runs in the browser here, not on the server
+
+This contradicts the usual advice, and the reason is structural rather than a
+preference. The thread lives inside `Chat`, a Client Component holding `useChat`
+state. A streaming message does not exist on the server at render time, and
+after `router.refresh()` even persisted messages re-render from client state —
+so a server-rendered highlight would apply to nothing that stays on screen.
+
+What follows from that:
+
+```ts
+// src/lib/highlighter.ts
+const highlighter = await createHighlighterCore({
+  themes: [promptxTheme],
+  langs: [],
+  engine: createJavaScriptRegexEngine(), // not Oniguruma: ~1 MB of WASM avoided
+})
+
+await highlighter.loadLanguage(bundledLanguages[language]) // one grammar, on first use
+highlighter.codeToHtml(code, { lang: language, theme: PROMPTX_THEME_NAME, structure: 'inline' })
+```
+
+- `shiki/core`, `shiki/engine/javascript`, `shiki/langs` and every grammar are **dynamically imported**. A conversation with no code fence downloads none of them.
+- `shiki/langs` is a map of importers, not of grammars — reading it costs an index module, and only the entry called downloads anything. This is why `@shikijs/langs` never becomes a direct dependency.
+- `structure: 'inline'` returns token spans only. The default emits shiki's own `<pre>` with its own padding and background, which would paint a second rectangle inside DESIGN.md's `code-block`.
+- The output goes through `dangerouslySetInnerHTML`, which is acceptable for exactly one reason: shiki HTML-escapes every token's text, so the only markup in the string is spans shiki generated. That is pinned by a test, not assumed.
 
 **Rules:**
 
 - Never enable `rehype-raw` or otherwise allow raw HTML. Model output is untrusted input and this is the XSS vector that matters most here.
-- Shiki highlighting runs on the server where possible. A shiki highlighter instance is expensive — create it once per process, never per message.
+- One highlighter instance per process, held as a module-level promise so concurrent callers join it rather than each building their own.
 - The code block component owns the copy button and the language label. Do not duplicate that markup per call site.
-- Only load the language grammars actually used (`ts`, `tsx`, `js`, `python`, `sql`, `bash`, `json`, `go`, `rust`, `css`, `html`), with a plaintext fallback for anything else. Loading every grammar adds megabytes.
-- The shiki theme must be retuned to the `DESIGN.md` palette — a stock theme like `github-dark` reintroduces chromatic accents the brand does not use.
-- Streaming markdown is frequently mid-token and syntactically incomplete. The renderer must tolerate an unclosed fence or bracket without throwing; wrap it in an error boundary.
+- The allowlist (`typescript`, `tsx`, `javascript`, `jsx`, `python`, `sql`, `shellscript`, `json`, `go`, `rust`, `css`, `html`) is a **compatibility** guarantee, not a size one — lazy loading already handles size. The JavaScript RegExp engine cannot emulate every Oniguruma pattern, and shiki's `forgiving` flag would swallow exactly that failure. Extending the list means extending `tests/lib/highlighter.test.ts`, which loads each grammar for real.
+- Use shiki's **canonical** ids. `bash`, `sh`, `shell` and `zsh` are all aliases of `shellscript`; treating `bash` as canonical works by accident and breaks the alias table.
+- Anything outside the allowlist renders plain, keeping the fence's own label. Unhighlighted code is still code.
+- The shiki theme must be retuned to the `DESIGN.md` palette — a stock theme like `github-dark` reintroduces chromatic accents the brand does not use. With no brand hue and the state colours reserved, lightness and italics are the only axes available.
+- Highlighting waits until a message settles. Re-tokenising a growing string is quadratic over a stream, and a half-written fence tokenises as whatever it currently looks like — an unclosed string swallows the rest of the block and then unswallows it.
+- Streaming markdown is frequently mid-token and syntactically incomplete. Wrap the renderer in a **per-message** error boundary — `error.tsx` at the route group would blank the whole workspace. The boundary must reset when the content changes, or one bad fragment kills the message permanently even though the next delta parses cleanly.
 - All links open in a new tab with `rel="noopener noreferrer"`.
 
 ---

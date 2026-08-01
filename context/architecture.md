@@ -47,7 +47,7 @@ offerings are not used — do not provision them.
 | Request duration | **100 minutes** maximum | Streaming is unconstrained in practice. The real limit on a response is the provider's own timeout, not the host's. |
 | `export const maxDuration` | **No effect** | A Vercel-only directive. Harmless but misleading — it is not what keeps a stream alive here. |
 | Runtime | Node, always | There is no Edge runtime to accidentally opt into, so `node:crypto` in the vault is never at risk. `export const runtime = 'nodejs'` is kept as documentation of intent, not as a guard. |
-| Process lifetime | Long-lived | In-memory caches (the shiki highlighter) genuinely persist across requests instead of being rebuilt per invocation. |
+| Process lifetime | Long-lived | In-memory caches genuinely persist across requests instead of being rebuilt per invocation. Note the example this line used to give — the shiki highlighter — turned out to live in the browser, not here; see "react-markdown + shiki" in `library-docs.md`. |
 | Scheduled jobs | Paid service type | Unavailable on free, which is why both jobs run in `pg_cron` inside Supabase. |
 | Idle behaviour | **Free services spin down after 15 minutes**, ~1 minute cold start | The single biggest deployment decision — see below. |
 | Instances | One, no autoscaling on free | Fine at this scale; the atomic quota reservation is still required, because concurrency exists within a single process. |
@@ -70,7 +70,7 @@ a design constraint rather than a bug, and it is the dominant performance fact
 about this deployment. Two consequences bind the build:
 
 - **The landing page must survive being the slow one.** It is the first thing a waking instance serves, so it carries no client-side data fetch, no above-the-fold image, and nothing that defers meaningful paint. Once the process is up it should be effectively instant, because everything else about the visit already cost a minute.
-- **Nothing may be optimised on the assumption of a warm process.** In-memory caches (the shiki highlighter) are still worth having — they help every request after the first — but no correctness or UX decision may depend on the process having been alive a moment ago.
+- **Nothing may be optimised on the assumption of a warm process.** In-memory caches are still worth having — they help every request after the first — but no correctness or UX decision may depend on the process having been alive a moment ago.
 
 Revisit this if the project goes into an application; upgrading is a dashboard
 change with no code impact.
