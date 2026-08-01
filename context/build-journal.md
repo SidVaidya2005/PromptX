@@ -76,6 +76,10 @@ detail ever removed. Compact confidently.
 - **Vitest ships in Phase 0, Playwright at F36.** F03's RLS suite needs the former; nothing needs browser binaries until there is a spec to run. (F01)
 - **A test suite that has never failed proves nothing.** The RLS suite was verified by weakening a policy to `using (true)`, confirming exactly the two expected tests went red, and restoring it. Any future change to these policies should be checked the same way. (F03)
 
+### Quota and limits
+
+- **The two quota limits are `NEXT_PUBLIC_*`, and the prefix is load-bearing.** Next inlines only that prefix into client bundles, and the composer displays the daily cap — unprefixed, the UI would fall back to its default while the server enforced the configured number, and the two would disagree silently with nothing to indicate it. Neither value is a secret. The cost is that both are inlined at build time, so changing either on Render needs a rebuild rather than a restart. (F01)
+
 ### Tooling
 
 - **`corepack` is not assumed to exist.** Node 26 does not ship it, so it cannot be assumed present on Render's build image either, and the failure mode is a build that dies with `pnpm: not found`. `pnpm` is installed via `npm`, and F38's build command reads the version out of `packageManager` to keep the pinning guarantee Corepack would have given. (F01)
@@ -101,6 +105,19 @@ At that phase's checkpoint, the whole phase collapses to:
 - {{SUMMARY_BULLET}} (F{{NN}}–F{{NN}})
 
 -->
+
+### Phase 1 — Core chat
+
+#### Feature 06 — Conversation list  *(2026-08-01)*
+
+- Decision: **day groups are UTC calendar days.** Consistent with how `shared_key_usage.usage_date` already defines a day, deterministic, and needs no timezone cookie. The accepted cost is that a user several hours from UTC can see a conversation from late tonight filed under "Previous 7 days"; the row's own relative time still reads "12 hours ago", so only the heading is off, and only near midnight. Pinned in `tests/lib/conversations.test.ts` as an assertion rather than left as folklore.
+- Decision: **the layout starts the query and hands the sidebar an unawaited promise.** The first draft had `ConversationList` calling `listConversations()` itself, which the `import/no-restricted-paths` rule rejected immediately — nothing under `src/components/` may import from `src/server/`. Awaiting it in `(app)/layout.tsx` instead would have blocked the whole three-column frame on a database round trip and made the skeleton dead code. Passing the pending promise keeps the fetch in `src/app/`, starts it before the profile fetch resolves, and lets the sidebar await it inside a `Suspense` boundary. The invariant turned out to improve the design rather than merely constrain it.
+- Decision: **`ConversationRow` is the only part of the list that ships to the browser.** A layout cannot read a child segment's `params`, so the URL is the sole source for which conversation is open; `usePathname()` in a leaf is the smallest thing that answers it. The query, the grouping, and the time formatting all stay on the server and arrive as props.
+- Decision: **`listConversations()` selects four columns, not `*`.** No CDN sits in front of the origin, and `system_prompt` can be 10,000 characters the sidebar has no use for. Archived rows are filtered outright rather than behind a flag — F22 is where "show archived" is specified and can add the parameter then.
+- Gotcha: **no element in the list may carry an `id`.** Below 1024px the desktop `<aside>` is `display:none` but still in the document while the drawer copy is mounted, so every id would exist twice. Group headings are `<h2>` with `<ul aria-label>`, never `aria-labelledby`.
+- Gotcha: at exactly seven days `formatRelativeTime` crosses into weeks and reads "last week", not "7 days ago" — noticed when an ad-hoc expectation against the real fixtures disagreed with the code. The code was right.
+- Verified: `pnpm typecheck`, `pnpm lint`, `pnpm build`, and `pnpm test` (45 tests, 13 new) all green. The grouping suite was itself falsified before being trusted — `RECENT_DAY_LIMIT` widened to 8 and the pinned branch short-circuited, which turned exactly the three expected tests red, then reverted. Six fixtures spanning every group were seeded through the Supabase MCP, the query's ordering and archived exclusion confirmed against them in SQL, the real rows run through `groupConversations` to confirm they land in the expected headings, and the fixtures then deleted (`conversations` is back to zero rows).
+- **Not verified: everything browser-shaped.** No Chrome extension was connected and Playwright does not arrive until F36, so nothing below was seen rendering: the rows appearing under their headings, the long title truncating without wrapping, the active indicator tracking navigation, the relative time on hover and under `pointer-coarse`, the drawer copy at 360/768/1024, and keyboard focus revealing the time. Carried deliberately, the way F01 and F04 carried the mobile layout until F05 closed it. F07 is the natural place to close this one, since it is the first feature that can create a conversation without seeded fixtures.
 
 ### Phase 0 — Foundation *(compacted)*
 
