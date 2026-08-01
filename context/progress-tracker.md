@@ -18,7 +18,7 @@ progress, and what is next.
 ## Current Status
 
 **Phase:** Phase 1 — Core chat — in progress
-**Last completed:** 06 Conversation list — `listConversations()` (four columns, archived excluded, ordered off `conversations_sidebar_idx`), a pure `groupConversations()` splitting Pinned · Today · Previous 7 days · Older on **UTC** calendar days, and the list streaming into the sidebar behind a `Suspense` boundary so the shell paints first. The layout starts the query and passes the **unawaited promise** down, because nothing under `src/components/` may import from `src/server/`. 13 new unit tests, falsified by weakening the boundary before being trusted. **The browser pass is unverified** — no Chrome extension was connected, so nothing was seen rendering; F07 closes it
+**Last completed:** 06 Conversation list — `listConversations()` (four columns, archived excluded, ordered off `conversations_sidebar_idx`), a pure `groupConversations()` splitting Pinned · Today · Previous 7 days · Older on **UTC** calendar days, and the list streaming into the sidebar behind a `Suspense` boundary so the shell paints first. The layout starts the query and passes the **unawaited promise** down, because nothing under `src/components/` may import from `src/server/`. 13 new unit tests, falsified by weakening the boundary before being trusted, and the visual pass done in a browser with `playwright-cli` — grouping, truncation, hover, keyboard focus, `pointer: coarse`, and 260px/drawer at all five widths. **The active indicator alone is unverified**, because `/chat/[id]` has no route until F07 and every row currently links to the root 404
 **Next:** 07 New conversation and composer
 
 ---
