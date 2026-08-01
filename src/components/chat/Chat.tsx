@@ -99,7 +99,7 @@ export function Chat({
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : (
-          <Thread messages={messages} />
+          <Thread messages={messages} isStreaming={isStreaming} modelId={modelId} />
         )}
       </div>
 

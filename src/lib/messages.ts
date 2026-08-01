@@ -22,6 +22,13 @@ import type { Message, MessageStatus } from '@/types/domain'
 export type MessageMetadata = {
   status: MessageStatus
   errorMessage: string | null
+  /**
+   * Which model wrote this. Null on user rows, and on assistant rows written
+   * before the column was populated. A live streaming message has no metadata
+   * at all, so the thread falls back to the model the composer is set to —
+   * which is, by definition, the one answering.
+   */
+  modelId: string | null
 }
 
 export type ChatMessage = UIMessage<MessageMetadata>
@@ -42,7 +49,11 @@ export function toUIMessages(messages: readonly Message[]): ChatMessage[] {
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
-    metadata: { status: message.status, errorMessage: message.error_message },
+    metadata: {
+      status: message.status,
+      errorMessage: message.error_message,
+      modelId: message.model_id,
+    },
     parts: [{ type: 'text' as const, text: message.content }],
   }))
 }

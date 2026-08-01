@@ -32,7 +32,7 @@ describe('toUIMessages', () => {
       {
         id: 'm1',
         role: 'user',
-        metadata: { status: 'complete', errorMessage: null },
+        metadata: { status: 'complete', errorMessage: null, modelId: null },
         parts: [{ type: 'text', text: 'Explain RLS' }],
       },
     ])
@@ -55,13 +55,26 @@ describe('toUIMessages', () => {
         content: 'partial ans',
         status: 'error',
         error_message: 'Generation stopped',
+        model_id: 'gemini-3.6-flash',
       }),
     ])
 
     expect(message?.metadata).toEqual({
       status: 'error',
       errorMessage: 'Generation stopped',
+      modelId: 'gemini-3.6-flash',
     })
+  })
+
+  it('carries the model that produced the response', () => {
+    // The meta line falls back to the composer's model when this is missing,
+    // which is right for a live stream and wrong for a reloaded thread whose
+    // model changed partway. The row has to be the authority.
+    const [message] = toUIMessages([
+      row({ id: 'm4', role: 'assistant', model_id: 'gemini-3.6-flash' }),
+    ])
+
+    expect(message?.metadata?.modelId).toBe('gemini-3.6-flash')
   })
 
   it('keeps a message that failed before producing anything', () => {
