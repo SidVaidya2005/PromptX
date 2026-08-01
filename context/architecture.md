@@ -893,19 +893,21 @@ import 'server-only'
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
+import { serverEnv } from '@/server/env'
+
 const ALGORITHM = 'aes-256-gcm'
 const IV_BYTES = 12
-const KEY_BYTES = 32
 
+/**
+ * Read through `serverEnv`, NOT `process.env`. env.ts is the one module that
+ * reads a secret, and its zod schema already proves this value decodes to
+ * exactly 32 bytes before the process finishes booting — so there is no length
+ * check here, and that absence is deliberate. An earlier version of this
+ * snippet re-validated the length locally, which put the same rule in two
+ * modules with nothing keeping them in step. (F12)
+ */
 function masterKey(): Buffer {
-  const raw = process.env.ENCRYPTION_KEY
-  if (!raw) throw new Error('ENCRYPTION_KEY is not set')
-
-  const key = Buffer.from(raw, 'base64')
-  if (key.length !== KEY_BYTES) {
-    throw new Error(`ENCRYPTION_KEY must decode to ${KEY_BYTES} bytes, got ${key.length}`)
-  }
-  return key
+  return Buffer.from(serverEnv.ENCRYPTION_KEY, 'base64')
 }
 
 export type SealedSecret = {
@@ -922,18 +924,45 @@ export function encrypt(plaintext: string): SealedSecret {
   return { ciphertext, iv, authTag: cipher.getAuthTag() }
 }
 
+/** Throws DecryptionError on a tampered row or a rotated master key. */
 export function decrypt({ ciphertext, iv, authTag }: SealedSecret): string {
-  const decipher = createDecipheriv(ALGORITHM, masterKey(), iv)
-  decipher.setAuthTag(authTag)
+  try {
+    const decipher = createDecipheriv(ALGORITHM, masterKey(), iv)
+    // The integrity check itself. Without it, final() accepts anything.
+    decipher.setAuthTag(authTag)
 
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
+  } catch {
+    // The original is discarded rather than chained: `cause` is the field that
+    // ends up in a log line by accident, and nothing from here may.
+    throw new DecryptionError()
+  }
 }
 
 /** The only representation of a key that may leave the server. */
 export function lastFour(apiKey: string): string {
   return apiKey.slice(-4)
 }
+
+/**
+ * Carries no ciphertext, no plaintext, and no `cause`, so it is safe to let it
+ * reach a caller that logs. node's own message is `Unsupported state or unable
+ * to authenticate data` — opaque, and identical for a tampered row and a
+ * rotated key, which is why it is replaced rather than wrapped. (F12)
+ */
+export class DecryptionError extends Error {
+  constructor() {
+    super('Could not decrypt the stored key')
+    this.name = 'DecryptionError'
+  }
+}
 ```
+
+**This module does not log.** Not an error, not a provider name, not a length,
+not temporarily during debugging. Everything it touches is either the master key
+or a plaintext provider key, and a log line is a response body that happens to
+be written to disk. Callers log instead — they hold the user id and the
+provider, which is what is actually useful and neither of which is secret.
 
 ### Provider resolution
 
@@ -1342,7 +1371,7 @@ family is not Inter need the family utility alongside them:
 
 ```html
 <h1 class="font-serif text-display-serif">…</h1>
-<code class="font-mono text-code">gemini-2.5-flash</code>
+<code class="font-mono text-code">gemini-3.6-flash</code>
 ```
 
 Every other step is Inter, which is `--font-sans` and therefore inherited from
@@ -1384,7 +1413,7 @@ infer that a pointer is fine.
 
 - No HTTP response body, no server log, no error message, and no client-visible payload may ever contain a decrypted provider API key. The only key material permitted to leave the server is `last_four`.
 - A decrypted API key exists only as a local variable inside a single request in `src/server/`. It is never assigned to a module-level variable, cached, stored in React state, or written to the database.
-- `src/server/vault.ts` is the only module that imports `node:crypto` for encryption, and the only module that reads `ENCRYPTION_KEY`.
+- `src/server/vault.ts` is the only module that imports `node:crypto` for encryption, and the only module that *uses* the master key. It does not *read* it: like every other secret, `ENCRYPTION_KEY` is read once by `src/server/env.ts`, which also owns the 32-byte validation. This invariant said "the only module that reads `ENCRYPTION_KEY`" until F12, which contradicted the rule directly below it and would have meant two modules validating one variable. (F12)
 - Every encryption generates a fresh random 12-byte IV. An IV is never reused across two encryptions.
 - Every secret environment variable is read through `src/server/env.ts` and nowhere else. `src/lib/` holds public configuration only and must never reference `ENCRYPTION_KEY`, `SUPABASE_SECRET_KEY`, or `SHARED_GEMINI_API_KEY`.
 - `SHARED_GEMINI_API_KEY` is consumed only inside `src/server/providers.ts`.

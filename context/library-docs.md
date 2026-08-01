@@ -71,7 +71,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 
 createOpenAI({ apiKey })('gpt-5')
 createAnthropic({ apiKey })('claude-opus-5')
-createGoogle({ apiKey })('gemini-2.5-flash')
+createGoogle({ apiKey })('gemini-3.6-flash')
 createOpenRouter({ apiKey })('anthropic/claude-opus-5')
 ```
 
@@ -737,7 +737,7 @@ copied exactly.
 - AES-256-GCM only. Not CBC (no integrity), not ECB, not a hand-rolled scheme.
 - A fresh 12-byte random IV per encryption, from `randomBytes`. Reusing an IV with GCM is a catastrophic failure that leaks the key stream — never derive an IV from the user id, the provider, or a counter.
 - Always store and verify the 16-byte auth tag. Decryption without `setAuthTag` silently accepts tampered ciphertext.
-- `ENCRYPTION_KEY` is read only inside `src/server/vault.ts`, and its length is validated before use.
+- `ENCRYPTION_KEY` is read only inside `src/server/env.ts`, which validates its length at boot; `src/server/vault.ts` consumes it through `serverEnv` and deliberately does not re-check it. Two modules validating one variable is two rules to keep in step. (F12)
 - Ciphertext, IV, and auth tag are stored as `bytea`, not as base64 text. No re-encoding round-trip to get wrong.
 - Any route that reaches this module declares `export const runtime = 'nodejs'`. `node:crypto` does not exist on the Edge runtime.
 - The vault has no logging. Do not add a `console.log` to it, even temporarily during debugging.
@@ -821,45 +821,56 @@ which is where it matters.
 
 ### Testing the vault
 
-`src/server/vault.ts` reads `ENCRYPTION_KEY` from `process.env` directly, so
-stub it rather than mocking the module:
+The vault reads its master key through `src/server/env.ts`, which parses the
+secret environment **once at module load**. `vi.stubEnv` alone therefore cannot
+reach it — by the time a test body runs, `serverEnv` is already frozen at
+whatever the environment held on first import. Reset the registry and import
+fresh, the same way `tests/server/env.test.ts` does:
 
 ```typescript
 // tests/server/vault.test.ts
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+const KEY_32 = Buffer.alloc(32, 7).toString('base64')
 
-import { decrypt, encrypt } from '@/server/vault'
+// env.ts validates the WHOLE secret environment, so all three are stubbed.
+const VALID_ENV = {
+  SUPABASE_SECRET_KEY: 'sb_secret_test_value',
+  ENCRYPTION_KEY: KEY_32,
+  SHARED_GEMINI_API_KEY: 'test-gemini-key',
+}
+
+function loadVault(overrides: Partial<typeof VALID_ENV> = {}) {
+  for (const [key, value] of Object.entries({ ...VALID_ENV, ...overrides })) {
+    vi.stubEnv(key, value)
+  }
+  return import('@/server/vault')
+}
 
 beforeEach(() => {
-  vi.stubEnv('ENCRYPTION_KEY', Buffer.alloc(32, 7).toString('base64'))
+  vi.resetModules()
 })
 
-describe('vault', () => {
-  it('returns the original key after a round trip', () => {
-    const sealed = encrypt('sk-test-abcdef')
-    expect(decrypt(sealed)).toBe('sk-test-abcdef')
-  })
+it('refuses ciphertext that has been modified', async () => {
+  // The module — not just the functions. Each import produces a NEW
+  // DecryptionError class, so `instanceof` only holds against the one from
+  // this same call.
+  const { encrypt, decrypt, DecryptionError } = await loadVault()
 
-  it('refuses ciphertext whose auth tag does not match', () => {
-    const sealed = encrypt('sk-test-abcdef')
-    sealed.ciphertext[0] ^= 0xff
+  const sealed = encrypt('sk-test-abcdef1234')
+  // Via the Buffer API: noUncheckedIndexedAccess types `sealed.ciphertext[0]`
+  // as `number | undefined`, and `^=` does not narrow it.
+  sealed.ciphertext.writeUInt8(sealed.ciphertext.readUInt8(0) ^ 0xff, 0)
 
-    expect(() => decrypt(sealed)).toThrow()
-  })
-
-  it('never reuses an IV', () => {
-    const ivs = new Set(
-      Array.from({ length: 500 }, () => encrypt('sk-test').iv.toString('hex')),
-    )
-    expect(ivs.size).toBe(500)
-  })
-
-  it('rejects a master key that is not 32 bytes', () => {
-    vi.stubEnv('ENCRYPTION_KEY', Buffer.alloc(16).toString('base64'))
-    expect(() => encrypt('sk-test')).toThrow(/32 bytes/)
-  })
+  expect(() => decrypt(sealed)).toThrow(DecryptionError)
 })
 ```
+
+**Rules for this suite specifically:**
+
+- Stub a fixed key rather than using the real `ENCRYPTION_KEY` that `vitest.config.ts` loads from `.env.local`. The suite must give the same answer on a machine that has never held a real key.
+- **Corrupt all three fields independently** — ciphertext, IV, and auth tag. One is not a proxy for the others.
+- **The tamper tests do not prove integrity on their own.** Measured at F12: deleting `setAuthTag` entirely leaves all three green, because node refuses `final()` on a GCM decipher that was never given a tag, so they still throw — for an unrelated reason. The **round-trip** tests are what fail on that mutation. Keep both halves.
+- Assert the failure carries no payload: no plaintext, no key, and no `cause`. Capture the error in a variable rather than asserting inside a `catch` — an `expect()` that throws from inside its own `try` is caught by that same `catch` and then asserted against, which is how a draft of this test passed against a `decrypt()` that never threw at all.
+- The wrong-length-key case asserts that **importing** the vault rejects, not that `encrypt()` throws. The rule lives in `env.ts` now; this proves the vault inherits it.
 
 ### Mocking the provider boundary
 

@@ -254,11 +254,17 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **Logic:**
 
-- `src/server/vault.ts` exactly as specified in `architecture.md` — AES-256-GCM, 12-byte random IV, 16-byte auth tag
-- `ENCRYPTION_KEY` length validated at load
+- `src/server/vault.ts` per `architecture.md` — AES-256-GCM, 12-byte random IV, 16-byte auth tag
+- `ENCRYPTION_KEY` validated at load — **in `src/server/env.ts`, which already does it**, not a second time in the vault
 - `lastFour()` helper
-- Vitest suite: round-trip correctness, unique IV across 1,000 encryptions, tampered ciphertext rejected, tampered auth tag rejected, wrong-length key rejected
+- Vitest suite: round-trip correctness, unique IV across 1,000 encryptions, tampered ciphertext / auth tag / IV each rejected independently, and a malformed master key refusing to load
 - No logging anywhere in the module
+
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **The vault reads `serverEnv.ENCRYPTION_KEY`, never `process.env`.** `architecture.md` carried two invariants that contradicted each other — "every secret is read through `env.ts`" and "the vault is the only module that reads `ENCRYPTION_KEY`" — and its snippet re-validated the 32-byte length that `env.ts` had already proven at boot. `env.ts` won; the snippet and the invariant were both corrected in place
+- **`decrypt()` throws a typed `DecryptionError` carrying no `cause`.** node's raw failure is opaque and identical for a tampered row and a rotated master key. `encrypt()` deliberately does not wrap — with a validated key it has no expected failure mode
+- **The tamper tests alone do not prove integrity**, measured rather than assumed: deleting `setAuthTag` leaves all three green, and the round-trip tests are what catch it
 
 ### 13 Key management
 

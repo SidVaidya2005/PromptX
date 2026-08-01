@@ -154,6 +154,18 @@ At that phase's checkpoint, the whole phase collapses to:
 
 -->
 
+### Phase 2 — Bring your own key
+
+#### Feature 12 — The encryption vault  *(2026-08-01)*
+
+- Decision: **the vault reads `serverEnv.ENCRYPTION_KEY` and validates nothing.** `architecture.md` held two invariants that could not both be true — "every secret environment variable is read through `src/server/env.ts` and nowhere else" (line 1389) against "`vault.ts` … the only module that reads `ENCRYPTION_KEY`" (line 1387) — and its canonical snippet resolved the tie the wrong way, re-checking a 32-byte length that `env.ts:22-27` had already proven at boot. Two modules validating one variable is two rules free to drift. `env.ts` won: invariant 1387 was narrowed to describe *use* rather than *read*, and the snippet was rewritten in place.
+- Decision: **`decrypt()` throws a typed `DecryptionError` with no `cause`.** node's own failure is `Unsupported state or unable to authenticate data` — opaque, and identical for a tampered row and a rotated master key, so it is replaced rather than wrapped. `cause` is omitted deliberately: it is the field that ends up in a log line by accident, and this module's entire job is that nothing from it ever does. `encrypt()` does not wrap at all — with an already-validated key it has no expected failure mode.
+- Gotcha: **the `vi.stubEnv` pattern `library-docs.md` documented cannot work against this design.** `serverEnv` is parsed once at module load, so by the time a test body runs the value is frozen. The suite uses `vi.resetModules()` + dynamic `import()` — the pattern `tests/server/env.test.ts` already established for the same reason. A knock-on: each import mints a *new* `DecryptionError` class, so an `instanceof` assertion only holds against the one from the same load. The helper returns the whole module rather than letting tests import the error separately.
+- Gotcha: **the mutation that breaks a test is rarely the one you predict.** The plan said dropping `setAuthTag` would turn the three tamper tests red. It did not — it left all three **green**, because node refuses `final()` on a GCM decipher that was never given a tag, so they threw for an unrelated reason. The *round-trip* tests are what failed. A second mutation (`decrypt()` returning `''` instead of throwing) turned the tamper tests red as intended.
+- Gotcha: **that second mutation exposed a test passing by swallowing its own assertion.** `reveals nothing about the key material` called `expect.unreachable()` inside a `try` whose own `catch` then caught it and cheerfully asserted against it — so it stayed green against a `decrypt()` that never threw. Restructured to capture the error in a variable and assert outside the block. Found only because the suite was mutated; typecheck, lint, and a green run all missed it.
+- Gotcha: `noUncheckedIndexedAccess` types `buffer[0]` as `number | undefined` and `^=` does not narrow it, so byte-flipping goes through `writeUInt8`/`readUInt8`. Compiles cleanly the moment it stops being index access.
+- Verified: 105 tests green (95 prior + 10 new), `pnpm typecheck` and `pnpm lint` clean. `grep console. src/server/vault.ts` empty; line 1 is `import 'server-only'`. IV uniqueness asserted at the full 1,000 encryptions specified in `build-plan.md`, with ciphertext distinctness alongside it — unique IVs alone would not prove the IV reaches the cipher. Both mutations were reverted and the suite re-run green.
+
 ### Phase 1 — Core chat *(compacted)*
 
 Six features, all on 2026-08-01. The phase turned an empty three-column shell

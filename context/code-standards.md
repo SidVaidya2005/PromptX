@@ -370,8 +370,15 @@ inline at a call site is a defect.
 ```typescript
 // src/lib/constants.ts
 
-/** The model served by the shared key. Nothing else is available without a personal key. */
-export const SHARED_MODEL_ID = 'gemini-2.5-flash' as const
+/**
+ * The model served by the shared key. Nothing else is available without a
+ * personal key. Pinned to a version, never an alias: this key is billed and
+ * feature 17 derives `estimated_usd` from a Flash rate card, so an alias that
+ * moves to differently-priced weights makes that ledger wrong silently.
+ * `gemini-2.5-flash` was the original choice and 404s for new users while still
+ * appearing in the models endpoint — verify a replacement with a real call. (F08)
+ */
+export const SHARED_MODEL_ID = 'gemini-3.6-flash' as const
 
 /** Per-user shared-key allowance, resetting at 00:00 UTC. */
 export const SHARED_KEY_DAILY_MESSAGE_LIMIT = Number(
