@@ -245,6 +245,8 @@ client rewrite its own past.
 ```
 Composer (Client Component)
   │  POST /api/chat  { conversationId, message, provider, modelId }
+  │                    ↑ nullable. null creates the conversation here, so a
+  │                      refusal below leaves no empty "New chat" behind.
   ▼                                    ↑ singular. One UIMessage.
 src/app/api/chat/route.ts
   │  zod-parse the body
@@ -1047,12 +1049,19 @@ export async function POST(request: Request) {
   }
 
   // Note: `message` is singular. The client sends only the newest turn.
+  // `conversationId` is NULLABLE — null means "create one". Creation lives in
+  // this handler rather than a separate endpoint, so that the refusals below
+  // leave no empty conversation behind either. (F07)
   const { conversationId, message, provider, modelId } = parsed.data
 
-  const conversation = await getConversation(conversationId)
-  if (!conversation) return Response.json({ error: 'Not found' }, { status: 404 })
+  // An existing conversation must be the caller's. RLS is what makes this null
+  // for someone else's row, so the 404 is a database guarantee.
+  if (conversationId) {
+    const conversation = await getConversation(conversationId)
+    if (!conversation) return Response.json({ error: 'Not found' }, { status: 404 })
+  }
 
-  const history = await listByConversation(conversationId)
+  const history = conversationId ? await listByConversation(conversationId) : []
 
   // Resolve and reserve BEFORE writing anything. Claims a shared-key slot
   // atomically when no personal key exists, and throws MissingKeyError (400),

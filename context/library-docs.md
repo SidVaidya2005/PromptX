@@ -629,7 +629,11 @@ export const providerSchema = z.enum(['openai', 'anthropic', 'google', 'openrout
 // Singular `message` — the client sends only the newest turn. The system prompt
 // is read from the conversation row server-side, never accepted from the client.
 export const chatRequestSchema = z.object({
-  conversationId: z.uuid(),
+  // Nullable: null means "no conversation yet, create one". Creation lives
+  // inside /api/chat rather than a separate endpoint so that a refusal — a
+  // quota wall at F16, a tripped breaker at F17 — leaves no empty "New chat"
+  // behind. See src/lib/schemas.ts, which is the live copy. (F07)
+  conversationId: z.uuid().nullable(),
   message: z.object({
     id: z.string(),
     role: z.literal('user'),
