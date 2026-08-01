@@ -4,6 +4,7 @@ import { COLLAPSED, RAIL_COOKIE, SIDEBAR_COOKIE } from '@/lib/constants'
 import { resolveDisplayName } from '@/lib/utils'
 
 import { requireUser } from '@/server/auth'
+import { listConversations } from '@/server/data/conversations'
 import { getProfile } from '@/server/data/profiles'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -34,6 +35,13 @@ export default async function AppLayout({
 }>) {
   const user = await requireUser()
 
+  // Started here and deliberately NOT awaited. The sidebar awaits it inside a
+  // Suspense boundary, so the three-column frame paints while the query is
+  // still in flight — and the query itself is already running by then, rather
+  // than starting once the shell has rendered. The fetch lives in this file
+  // because nothing under src/components/ may import from src/server/.
+  const conversations = listConversations()
+
   const [profile, cookieStore] = await Promise.all([getProfile(), cookies()])
 
   // A missing profile row is recoverable. The handle_new_user trigger should
@@ -50,7 +58,7 @@ export default async function AppLayout({
     // tooltips, and a provider there would ship to every signed-out visitor.
     <TooltipProvider>
       <AppShell
-        sidebar={<Sidebar user={shellUser} />}
+        sidebar={<Sidebar user={shellUser} conversations={conversations} />}
         rail={<OutlineRail />}
         sidebarCollapsed={cookieStore.get(SIDEBAR_COOKIE)?.value === COLLAPSED}
         railCollapsed={cookieStore.get(RAIL_COOKIE)?.value === COLLAPSED}
