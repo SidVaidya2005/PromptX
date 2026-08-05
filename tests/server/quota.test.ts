@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
+import { SHARED_KEY_DAILY_MESSAGE_LIMIT, SHARED_MODEL_ID } from '@/lib/constants'
 
 import type { Database } from '@/types/database'
 
@@ -295,4 +295,127 @@ describe('record_shared_tokens', () => {
 
     expect((await readRow())?.message_count).toBe(4)
   })
+})
+
+describe('reconcile_shared_key_usage', () => {
+  /**
+   * The self-healing half of the reservation bargain, shipped at F02 and
+   * running on pg_cron every ten minutes ever since — against a database that
+   * had no reservations to correct until F16, and no orphan since. Its runs
+   * report "succeeded", which only means it executed; nothing had ever watched
+   * it lower a counter.
+   *
+   * Called through the admin client because execute is revoked from
+   * `authenticated`: pg_cron invokes it as the table owner, and nobody should
+   * be able to sweep their own allowance by hand.
+   */
+
+  /** Ages the row past the five-minute staleness bound the sweep uses. */
+  async function ageRow(minutes: number) {
+    const { error } = await admin
+      .from('shared_key_usage')
+      .update({ updated_at: new Date(Date.now() - minutes * 60_000).toISOString() })
+      .eq('user_id', user.id)
+      .eq('usage_date', today())
+
+    if (error) throw new Error(`could not age the row: ${error.message}`)
+  }
+
+  it('releases a reservation whose generation never arrived', async () => {
+    // The orphan this exists for: a process that died between reserving the
+    // slot and running onError, leaving a claim for a message the user never
+    // received. `messages` is the source of truth and holds nothing here.
+    await setCount(3)
+    await ageRow(10)
+
+    await admin.rpc('reconcile_shared_key_usage')
+
+    expect((await readRow())?.message_count).toBe(0)
+  })
+
+  it('leaves a reservation younger than the staleness window alone', async () => {
+    // Without this guard the sweep races live requests and hands out slots that
+    // are genuinely in use. setCount leaves updated_at at now().
+    await setCount(3)
+
+    await admin.rpc('reconcile_shared_key_usage')
+
+    expect((await readRow())?.message_count).toBe(3)
+  })
+
+  it('only ever lowers, so it cannot charge for what the reservation missed', async () => {
+    // A delivered message with no matching reservation makes `actual` exceed
+    // the counter. The sweep's `message_count > actual` clause must decline to
+    // correct upward — a job that could raise this would bill people for
+    // generations the reserve path already failed to charge for.
+    const conversationId = await seedDeliveredSharedMessage()
+
+    try {
+      await setCount(0)
+      await ageRow(10)
+
+      await admin.rpc('reconcile_shared_key_usage')
+
+      expect((await readRow())?.message_count).toBe(0)
+    } finally {
+      await admin.from('conversations').delete().eq('id', conversationId)
+    }
+  })
+
+  it('retires an assistant row abandoned mid-stream', async () => {
+    // The second artefact a dead process leaves, and the user-visible one: a
+    // row stuck in `streaming` renders as a message that loads forever.
+    const conversationId = await seedDeliveredSharedMessage('streaming', 10)
+
+    try {
+      await admin.rpc('reconcile_shared_key_usage')
+
+      const { data } = await admin
+        .from('messages')
+        .select('status, error_message')
+        .eq('conversation_id', conversationId)
+        .single()
+
+      expect(data?.status).toBe('error')
+      expect(data?.error_message).toBe('Generation was interrupted')
+    } finally {
+      await admin.from('conversations').delete().eq('id', conversationId)
+    }
+  })
+
+  /** A conversation with one shared-key assistant message. Returns its id. */
+  async function seedDeliveredSharedMessage(
+    status: 'complete' | 'streaming' = 'complete',
+    ageMinutes = 0,
+  ): Promise<string> {
+    const { data: conversation, error: conversationError } = await admin
+      .from('conversations')
+      .insert({
+        user_id: user.id,
+        provider: 'google',
+        model_id: SHARED_MODEL_ID,
+      })
+      .select('id')
+      .single()
+
+    if (conversationError || !conversation) {
+      throw new Error(`could not seed a conversation: ${conversationError?.message}`)
+    }
+
+    const { error: messageError } = await admin.from('messages').insert({
+      conversation_id: conversation.id,
+      user_id: user.id,
+      role: 'assistant',
+      content: 'seeded',
+      status,
+      used_shared_key: true,
+      provider: 'google',
+      model_id: SHARED_MODEL_ID,
+      created_at: new Date(Date.now() - ageMinutes * 60_000).toISOString(),
+    })
+
+    if (messageError) throw new Error(`could not seed a message: ${messageError.message}`)
+
+    return conversation.id
+  }
 })
