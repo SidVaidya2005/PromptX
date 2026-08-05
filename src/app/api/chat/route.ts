@@ -37,8 +37,14 @@ import {
 
 /**
  * Documents intent. On Render every route is Node already, so nothing can
- * silently switch this to Edge and break `node:crypto` in the vault once
- * feature 12 puts it behind this path.
+ * silently switch this to Edge and break `node:crypto` in the vault — which
+ * resolveModel() now reaches on this path whenever the caller has a key of
+ * their own.
+ *
+ * Naming the decrypting function here rather than describing it would fail
+ * tests/security/key-exposure.test.ts, which greps src/app for the identifier
+ * and cannot tell a comment from a call. That bluntness is deliberate and the
+ * comment bends around it, not the other way round.
  */
 export const runtime = 'nodejs'
 
@@ -48,10 +54,10 @@ export const runtime = 'nodejs'
  * Two orderings in here are doing real work.
  *
  * **Nothing is written until the request is certain to reach a provider.**
- * resolveModel() comes before the first insert, so a refusal — a missing key
- * now, a spent daily allowance at feature 16, a tripped breaker at feature 17 —
- * leaves no dangling prompt and no empty conversation. That is also why
- * conversation creation lives in this handler rather than its own endpoint.
+ * resolveModel() comes before the first insert, so a refusal — an unknown
+ * model, a missing key, a spent daily allowance, a tripped breaker — leaves no
+ * dangling prompt and no empty conversation. That is also why conversation
+ * creation lives in this handler rather than its own endpoint.
  *
  * **The assistant row is created up front in `streaming` status**, and its id is
  * held for the life of the stream. Without it there is no stable row to update

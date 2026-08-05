@@ -12,9 +12,11 @@ import { Button } from '@/components/ui/button'
  * three-column shell, and pretending otherwise would mean adding a catch-all
  * route purely to fake it.
  *
- * It exists now because feature 05's account menu links to /settings, which
- * feature 13 builds. Until then that click lands here — styled and on-brand
- * rather than on an unstyled framework default.
+ * It was added at feature 05 because the account menu then linked to a
+ * /settings route nothing had built yet. That reason has expired — the menu
+ * points at /settings/keys, which exists — but the page stays: any path
+ * matching no route lands here, and the alternative is an unstyled framework
+ * default.
  */
 export default function NotFound() {
   return (

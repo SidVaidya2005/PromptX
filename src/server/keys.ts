@@ -152,10 +152,9 @@ export async function storeProviderKey(
  *
  * Returns PLAINTEXT. The only sanctioned caller is `resolveModel()` in
  * `src/server/providers.ts`, which uses it to instantiate a provider client and
- * lets it fall out of scope. It has no caller until feature 14. It must never be
- * reached from a route handler, a Server Component, or anything that shapes a
- * response — a static test in `tests/security/key-exposure.test.ts` enforces
- * that, because a comment cannot.
+ * lets it fall out of scope. It must never be reached from a route handler, a
+ * Server Component, or anything that shapes a response — a static test in
+ * `tests/security/key-exposure.test.ts` enforces that, because a comment cannot.
  */
 export async function getDecryptedKey(provider: Provider): Promise<string | null> {
   const sealed = await getSealedKey(provider)

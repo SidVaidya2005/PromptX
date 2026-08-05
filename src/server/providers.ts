@@ -131,11 +131,11 @@ function instantiate(provider: Provider, modelId: string, apiKey: string): Langu
  * The shared model, for system overhead rather than for a user's message.
  *
  * Deliberately NOT `resolveModel()`, and the separation is the whole point.
- * Feature 16 inserts `reserveSharedSlot()` into that function — route titling
- * through there and the day it lands, every conversation silently costs its
- * owner one of twenty daily messages for a title they never asked for. Nothing
- * on screen would say so. A second entry point cannot drift into claiming a
- * slot, because there is no slot logic on this path to begin with.
+ * That function now calls `reserveSharedSlot()` — route titling through it and
+ * every conversation silently costs its owner one of twenty daily messages for
+ * a title they never asked for, with nothing on screen to say so. A second
+ * entry point cannot drift into claiming a slot, because there is no slot logic
+ * on this path to begin with.
  *
  * It still lives in this file rather than in the caller, because
  * `SHARED_GEMINI_API_KEY` is read here and nowhere else.

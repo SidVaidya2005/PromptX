@@ -78,9 +78,10 @@ export const SHARED_MODEL_ID = 'gemini-3.6-flash' as const
  * How each provider is named in the interface.
  *
  * Keyed by the Postgres enum so adding a provider to the enum without naming it
- * here is a type error rather than a blank row. Feature 14 may fold this into
- * the model catalog; until that file exists, this is the one place a provider
- * has a human name.
+ * here is a type error rather than a blank row. Feature 14 considered folding
+ * this into `src/lib/models.ts` and did not: the catalog is keyed by provider
+ * and would have to carry the label on every entry, or once in a shape that is
+ * this map by another name. It stays the one place a provider has a human name.
  */
 export const PROVIDER_LABELS: Record<Provider, string> = {
   openai: 'OpenAI',
