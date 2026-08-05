@@ -29,6 +29,7 @@ import {
 } from '@/server/data/messages'
 import { MissingKeyError, resolveModel, UnknownModelError } from '@/server/providers'
 import {
+  BudgetExhaustedError,
   QuotaExceededError,
   recordSharedKeyTokens,
   releaseSharedSlot,
@@ -101,6 +102,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: `No API key configured for ${error.provider}`, code: 'missing_key' },
         { status: 400 },
+      )
+    }
+
+    if (error instanceof BudgetExhaustedError) {
+      // 503, not 429: nothing this person does changes the answer, so a status
+      // meaning "you have had your share" would be wrong. Checked before the
+      // reservation, so a refusal here has not touched their daily allowance
+      // either — and like every refusal above it, nothing has been written.
+      return NextResponse.json(
+        { error: error.message, code: 'budget_exhausted' },
+        { status: 503 },
       )
     }
 
