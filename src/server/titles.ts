@@ -13,6 +13,7 @@ import { normalizeTitle } from '@/lib/titles'
 import { getConversation, setGeneratedTitle } from '@/server/data/conversations'
 import { listByConversation } from '@/server/data/messages'
 import { sharedTitleModel } from '@/server/providers'
+import { isSharedKeyAvailable, recordSharedBudgetTokens } from '@/server/quota'
 
 const TITLE_SYSTEM_PROMPT = [
   'You name chat conversations. You will be shown the opening exchange of one.',
@@ -37,14 +38,14 @@ const TITLE_SYSTEM_PROMPT = [
  * Quota policy, from `build-plan.md` feature 10: titling runs on the shared key
  * but is system overhead, so it claims **no** user slot — see
  * `sharedTitleModel()`, which is a separate entry point for exactly that reason.
- * Its tokens are still real money and belong in `shared_key_budget`.
+ * Its tokens are still real money, so they go to `shared_key_budget` and only
+ * there, through `recordSharedBudgetTokens()`, which takes no user id and so
+ * cannot reach anybody's daily row. Accounted, never charged.
  *
- * FEATURE 17 owns both halves of that and neither exists yet:
- *   - Skip entirely while the circuit breaker is tripped, checked before the call below.
- *   - `recordSharedKeyTokens(usage)` after it, from the `usage` this discards today.
- * Note that the reconciliation sweep cannot cover for the second one: it derives
- * usage from `messages` rows carrying `used_shared_key`, and a title writes no
- * message. Unaccounted until F17 wires it up deliberately.
+ * The breaker is honoured here as well as in `resolveModel()`. Titling is the
+ * one path that spends the shared key without a user having asked for anything,
+ * so leaving it out would mean the ceiling stopped every message and went on
+ * paying for titles.
  */
 export async function generateConversationTitle(
   conversationId: string,
@@ -72,8 +73,13 @@ export async function generateConversationTitle(
     // sentence the model had not finished.
     if (!prompt || !answer) return null
 
-    // FEATURE 17: return null here when the breaker is tripped, before spending.
-    const { text } = await generateText({
+    // Below the two free checks above and above everything that costs money.
+    // A conversation that goes untitled while the budget is spent keeps
+    // 'New chat' and is titled by the next request after the month rolls over,
+    // because the gate is still the default title rather than a flag.
+    if (!(await isSharedKeyAvailable())) return null
+
+    const { text, usage } = await generateText({
       model: sharedTitleModel(),
       system: TITLE_SYSTEM_PROMPT,
       prompt: buildSource(prompt.content, answer.content),
@@ -82,7 +88,10 @@ export async function generateConversationTitle(
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
     })
 
-    // FEATURE 17: recordSharedKeyTokens(usage) belongs here — accounted, never charged.
+    // Before the normalizing below, deliberately: the money was spent the moment
+    // the call returned, so it is recorded even when the title turns out to be
+    // unusable and this function goes on to return null.
+    await recordSharedBudgetTokens(usage)
 
     const title = normalizeTitle(text)
     if (!title) return null
