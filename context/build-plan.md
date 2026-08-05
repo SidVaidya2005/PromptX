@@ -287,7 +287,7 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **Decisions taken during this feature** (see `build-journal.md` for the full entries):
 
-- **The probe is a free models-endpoint call, not a generation.** Zero tokens and no model id, which matters because the catalog does not exist until feature 14. It proves the key is real and authorised; it does not prove inference is enabled, which is the accepted gap
+- **The probe is a free models-endpoint call, not a generation.** Zero tokens and no model id, which matters because the catalog does not exist until feature 14. It proves the key is real and authorised; it does not prove inference is enabled, which is the accepted gap — and that gap stays open past F14, which gave the key a place to be *used* rather than a second place to be checked
 - **Two probe failures, kept apart, both failing closed.** `401`/`403` → `400 invalid_key`; a timeout, a 5xx, or a network error → `503 probe_unavailable`. Neither writes a row. Collapsing them tells a user their correct key is wrong because a provider had a bad minute
 - **`bytea` is hex over PostgREST.** The conversion lives only in `src/server/data/provider-keys.ts`. Passing a `Buffer` to supabase-js silently stores `{"type":"Buffer",…}` and reports success — proven by mutation, not assumed
 - **This feature also built `/settings/account`**, which no feature in this plan owns. It is specified in `project-overview.md` ("profile details and sign-out") and built read-only to that line. **Editing `display_name` is still unbuilt and unassigned** — the data model calls the column editable and no feature specifies the path
@@ -301,6 +301,14 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `MissingKeyError` thrown when a provider is selected without a key
 - OpenRouter ids validated as namespaced (`vendor/model`)
 - Vitest: each provider resolves with a key; a keyless non-Google provider throws; a keyless Google request with a non-shared model id throws
+
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **The catalog is an enforcement boundary, checked in `resolveModel()` and nowhere else.** A model absent from it throws `UnknownModelError` → `400 unknown_model`. Not in `chatRequestSchema` as well: one rule in two files is two rules free to drift, which is the lesson F12 already paid for
+- **The `vendor/model` check became a test on catalog data rather than a runtime branch.** Membership is strictly stronger than a `/` check, so the branch would be dead code; what it was really guarding — a namespaced id pasted under a native provider — is an authoring mistake, and `tests/lib/models.test.ts` catches it
+- **Every shipped id was listed live and then proven by generating.** Two different things: Google's endpoint still lists `gemini-2.5-flash`, which answers "no longer available to new users". That id was used as a deliberate control and failed as expected
+- **`openai` and `anthropic` ship as empty catalogs**, with no key available to prove an id for either. The accepted consequence is that a valid OpenAI or Anthropic key still cannot send a message — so the refusal names the empty catalog instead of blaming the model id. **Populating them is unassigned work that F15 will make visible** as two empty picker groups
+- **OpenRouter needs `compatibility: 'strict'`**, which is not the factory default. At the default it omits `stream_options: { include_usage: true }` and every OpenRouter message would persist with null token counts, which F17's ledger would read as free
 
 ### 15 Model picker
 

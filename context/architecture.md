@@ -1004,7 +1004,17 @@ export async function resolveModel(
   provider: Provider,
   modelId: string,
 ): Promise<ResolvedModel> {
-  const apiKey = await getDecryptedKey(userId, provider)
+  // The catalog is an enforcement boundary, not a list the picker happens to
+  // read, and it is checked FIRST because it is the only free check — refusing
+  // an unknown model here costs no database round trip and no decrypt. (F14)
+  if (!findModel(provider, modelId)) {
+    throw new UnknownModelError(provider, modelId)
+  }
+
+  // ONE argument. Isolation comes from RLS on the cookie-bound client, not from
+  // a userId parameter — this snippet said `getDecryptedKey(userId, provider)`
+  // until F14, which is a type error against the real signature.
+  const apiKey = await getDecryptedKey(provider)
 
   if (apiKey) {
     return { model: instantiate(provider, modelId, apiKey), usedSharedKey: false }
@@ -1033,10 +1043,29 @@ function instantiate(provider: Provider, modelId: string, apiKey: string): Langu
     case 'anthropic':
       return createAnthropic({ apiKey })(modelId)
     case 'google':
-      // v7 renamed the Google factory: createGoogleGenerativeAI → createGoogle.
+      // `createGoogle` is correct, but the reason this line used to give was
+      // not: nothing was renamed and nothing was removed. The installed
+      // @ai-sdk/google still exports `createGoogleGenerativeAI` as an alias of
+      // the same function, and the package is v4 — `ai` is v7, and provider
+      // packages version independently of it. (F14)
       return createGoogle({ apiKey })(modelId)
     case 'openrouter':
-      return createOpenRouter({ apiKey })(modelId)
+      // Not the uniform `({ apiKey })(modelId)` the other three use, and the
+      // differences are load-bearing rather than cosmetic. (F14)
+      return createOpenRouter({
+        apiKey,
+        appName: 'PromptX',
+        appUrl: SITE_URL,
+        // createOpenRouter() defaults to 'compatible', which OMITS
+        // `stream_options: { include_usage: true }` — so a streamed response
+        // reports no usage at all and every OpenRouter message persists with
+        // null token counts. F17's breaker is fed by measured usage only, so
+        // that silence would read as "this cost nothing". Measured: with
+        // 'strict', a real send recorded in=7 out=83.
+        compatibility: 'strict',
+        // `.chat()` because the callable's FIRST type overload resolves to a
+        // completion model while the runtime dispatches to chat.
+      }).chat(modelId)
   }
 }
 

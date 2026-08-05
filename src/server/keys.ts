@@ -28,8 +28,14 @@ import type { Provider, ProviderKeySummary } from '@/types/domain'
  * question being asked, which is whether this key is real and live right now.
  *
  * What it does not prove is that inference is enabled on the key — a models
- * endpoint can answer for a key that cannot generate. That is the accepted gap;
- * feature 14 is where a real generation path exists to catch it.
+ * endpoint can answer for a key that cannot generate. That is the accepted gap,
+ * and it is still open: this comment used to say feature 14 was where a real
+ * generation path would catch it, which was wrong. F14 gave the key a place to
+ * be USED, not a second place to be checked, and moving the probe to a
+ * generation would spend a user's money to validate a paste. The gap now
+ * surfaces where it always would have — as a failed first message, carrying the
+ * provider's own reason. Measured at F14: an OpenRouter key with too small a
+ * balance probes clean and then answers 402. (F14)
  */
 type ProbeSpec = {
   url: (apiKey: string) => string
