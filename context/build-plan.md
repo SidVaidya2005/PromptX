@@ -325,6 +325,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `updateConversationModel()` persisting `provider` and `model_id`
 - Switching models mid-conversation preserves full history; only subsequent messages record the new model
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **What the picker greys out and what `resolveModel()` refuses are the same function.** `isSharedModel()` in `src/lib/models.ts`, called from both. Two independent spellings of one rule disagree invisibly — a picker offering a model every send then rejects, or hiding one that works
+- **Selection is keyed on `(provider, modelId)`, never the id alone.** `Gemini 3.6 Flash` is in the catalog twice, under `google` and `openrouter`, with different ids and different bills. Radix carries one string per radio item, so the pair is encoded into it — split on the *first* separator, since a model id may contain a colon
+- **"Shared" appears only while no Google key is configured.** Once one exists that model is billed to its owner, and the marker would be a lie. Rendered as mute caption text rather than DESIGN.md's `status-chip`, which is `canvas-soft` on a menu that is also `canvas-soft`
+- **The "Add key" row is deliberately not a disabled item.** `ITEM_BASE` carries `data-disabled:pointer-events-none`, so a Radix-disabled item cannot hold a working link — the one affordance on that row that has to work
+- **`PATCH` checks the catalog too.** Otherwise a conversation can be left holding a model every later send refuses, which reads as a thread that stopped working
+- **A model change does not touch `updated_at`.** The sidebar orders on activity, and changing the model is not activity
+
 ### 16 Shared-key quota
 
 **UI:**
