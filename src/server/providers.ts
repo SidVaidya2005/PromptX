@@ -7,7 +7,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import type { LanguageModel } from 'ai'
 
 import { PROVIDER_LABELS, SHARED_MODEL_ID, SITE_URL } from '@/lib/constants'
-import { findModel, MODEL_CATALOG } from '@/lib/models'
+import { findModel, isSharedModel, MODEL_CATALOG } from '@/lib/models'
 
 import { serverEnv } from '@/server/env'
 import { getDecryptedKey } from '@/server/keys'
@@ -56,7 +56,11 @@ export async function resolveModel(
 
   // No personal key: the shared Gemini key is the only fallback, and only for
   // the one model it serves. Anything else is a missing key, not a bad request.
-  if (provider !== 'google' || modelId !== SHARED_MODEL_ID) {
+  //
+  // `isSharedModel` rather than the comparison written out, because F15's picker
+  // has to grey out exactly what this refuses. Two spellings of one rule would
+  // drift silently — into a picker offering a model every send then rejects.
+  if (!isSharedModel(provider, modelId)) {
     throw new MissingKeyError(provider)
   }
 

@@ -74,6 +74,26 @@ export const titleRequestSchema = z.object({
 export type TitleRequest = z.infer<typeof titleRequestSchema>
 
 /**
+ * The body of `PATCH /api/conversations/[id]`.
+ *
+ * Deliberately the same two fields, with the same bounds, as `chatRequestSchema`
+ * carries — a model reaches the server through exactly these two routes, and
+ * describing it differently in each would be the first step towards them
+ * disagreeing.
+ *
+ * This proves the id is a plausible string, not that it is a model. Catalog
+ * membership is `findModel()`'s answer and the route asks it separately, for the
+ * reason written on that function: a schema that also knew the catalog would be
+ * a second copy of the rule.
+ */
+export const updateConversationModelSchema = z.object({
+  provider: providerSchema,
+  modelId: z.string().min(1).max(120),
+})
+
+export type UpdateConversationModelInput = z.infer<typeof updateConversationModelSchema>
+
+/**
  * The body of `POST /api/keys`.
  *
  * `apiKey` is bounded on both ends, and neither bound is validation — the probe

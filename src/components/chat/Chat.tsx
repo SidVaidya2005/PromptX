@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { useChat } from '@ai-sdk/react'
@@ -10,6 +10,7 @@ import type { ChatMessage } from '@/lib/messages'
 
 import { Composer } from '@/components/chat/Composer'
 import { Thread } from '@/components/chat/Thread'
+import { useModelMutation } from '@/components/chat/use-model-mutation'
 
 import type { Provider } from '@/types/domain'
 
@@ -19,6 +20,8 @@ type ChatProps = {
   initialMessages: ChatMessage[]
   provider: Provider
   modelId: string
+  /** Providers this user holds a key for, for the picker's disabled states. */
+  configuredProviders: readonly Provider[]
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -34,16 +37,45 @@ type ChatProps = {
  * server sends the id it created as a transient data part, `onData` catches it,
  * and the URL is corrected once the response finishes — a real navigation
  * rather than a history rewrite, so the router's idea of the route stays true.
+ *
+ * The chosen model is state here, seeded from the row. It is state rather than a
+ * prop because it changes without a navigation, and it is seeded rather than
+ * derived because the row is the source of truth on load. `/chat/[id]` passes a
+ * `key` so switching conversations remounts this — without it the same component
+ * survives the navigation and would show the previous conversation's model.
  */
 export function Chat({
   conversationId,
   initialMessages,
   provider,
   modelId,
+  configuredProviders,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
   const createdConversationId = useRef<string | null>(null)
+  const [model, setModel] = useState({ provider, modelId })
+  const { changeModel, error: modelError } = useModelMutation()
+
+  /**
+   * Applies a model choice, and persists it when there is a row to persist to.
+   *
+   * On `/chat` there is no conversation yet — it is created by the first send —
+   * so the choice is local and travels in the request body, which
+   * `createConversation()` already writes. Nothing is lost by not persisting
+   * here; there is simply nothing to persist to.
+   *
+   * The local state moves first and is not rolled back if the write fails. The
+   * request that follows carries the same values in its body, so a failed PATCH
+   * costs the persistence, not the intent — and the error says so.
+   */
+  function selectModel(nextProvider: Provider, nextModelId: string) {
+    setModel({ provider: nextProvider, modelId: nextModelId })
+
+    if (conversationId) {
+      void changeModel(conversationId, { provider: nextProvider, modelId: nextModelId })
+    }
+  }
 
   /**
    * Asks the server to name a brand-new conversation, then refreshes again so
@@ -71,12 +103,15 @@ export function Chat({
           body: {
             conversationId,
             message: messages[messages.length - 1],
-            provider,
-            modelId,
+            provider: model.provider,
+            modelId: model.modelId,
           },
         }),
       }),
-    [conversationId, provider, modelId],
+    // The chosen model, not the prop: the closure captures these values, so a
+    // transport left on the initial props would keep sending to the model the
+    // conversation loaded with however many times the picker was used.
+    [conversationId, model.provider, model.modelId],
   )
 
   const { messages, sendMessage, status, stop, error } = useChat<ChatMessage>({
@@ -121,7 +156,11 @@ export function Chat({
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : (
-          <Thread messages={messages} isStreaming={isStreaming} modelId={modelId} />
+          <Thread
+            messages={messages}
+            isStreaming={isStreaming}
+            modelId={model.modelId}
+          />
         )}
       </div>
 
@@ -136,8 +175,23 @@ export function Chat({
         </p>
       )}
 
+      {/* A different request with a different failure. The choice still applies
+          to the next message even when persisting it did not land, so this says
+          what did not happen rather than asking for the send again. */}
+      {modelError && (
+        <p
+          role="alert"
+          className="mx-auto w-full max-w-180 px-lg text-body-sm text-danger"
+        >
+          {modelError}
+        </p>
+      )}
+
       <Composer
-        modelId={modelId}
+        provider={model.provider}
+        modelId={model.modelId}
+        configuredProviders={configuredProviders}
+        onSelectModel={selectModel}
         isStreaming={isStreaming}
         onSend={(text) => void sendMessage({ text })}
         onStop={() => void stop()}

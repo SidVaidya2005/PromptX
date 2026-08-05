@@ -123,13 +123,104 @@ export const MODEL_CATALOG: Record<Provider, readonly Model[]> = {
 }
 
 /**
+ * The order providers appear in the picker.
+ *
+ * Explicit rather than `Object.keys(MODEL_CATALOG)`, which is object-literal
+ * order — correct today and silently reorderable by anyone tidying the catalog.
+ * A test pins this against the catalog's own keys, so a provider added to one
+ * and not the other cannot render as a group with no heading. (F15)
+ */
+export const PROVIDER_ORDER: readonly Provider[] = [
+  'google',
+  'openrouter',
+  'openai',
+  'anthropic',
+] as const
+
+/**
  * One catalog entry, or null when this provider does not serve that id.
  *
- * `resolveModel()` treats null as a refusal, which is what makes this catalog an
- * enforcement boundary rather than a list the picker happens to read. The check
- * lives there and only there — validating membership in the zod schema as well
- * would put one rule in two files with nothing keeping them in step.
+ * Null is a refusal, which is what makes this catalog an enforcement boundary
+ * rather than a list the picker happens to read. Two callers check it —
+ * `resolveModel()` before a send, and `PATCH /api/conversations/[id]` before
+ * storing a model on a conversation — because a model id can enter the system
+ * through either, and a conversation left holding an id the sender will refuse
+ * is a thread that cannot be replied to until someone changes the picker back.
+ * That is two call sites of one rule, not the same rule written twice: the
+ * definition lives here, and validating membership in a zod schema as well is
+ * what would put it in two places with nothing keeping them in step.
  */
 export function findModel(provider: Provider, modelId: string): Model | null {
   return MODEL_CATALOG[provider].find((model) => model.id === modelId) ?? null
+}
+
+/**
+ * Whether the shared key serves this model.
+ *
+ * The one definition of what a user without any key of their own can reach, and
+ * it has two callers that must not drift: `resolveModel()` refuses everything
+ * else on the server, and the picker greys out everything else in the browser.
+ * Written as one function precisely because those two answers disagreeing is
+ * invisible — the picker would offer a model that every send then refuses, or
+ * hide one that would have worked. (F15)
+ */
+export function isSharedModel(provider: Provider, modelId: string): boolean {
+  return provider === 'google' && modelId === SHARED_MODEL_ID
+}
+
+/**
+ * Whether this caller can actually send to this model right now.
+ *
+ * Their own key for the provider, or the shared fallback. Mirrors
+ * `resolveModel()` branch for branch, through `isSharedModel` above.
+ */
+export function isModelAvailable(
+  provider: Provider,
+  modelId: string,
+  configuredProviders: readonly Provider[],
+): boolean {
+  return configuredProviders.includes(provider) || isSharedModel(provider, modelId)
+}
+
+/**
+ * A single string identifying one catalog entry, for a Radix radio group.
+ *
+ * A model id alone will not do. `Gemini 3.6 Flash` exists under both `google`
+ * and `openrouter` — same label, different ids, different bills — so a picker
+ * keyed on the id would light the wrong checkmark and, worse, would let a
+ * selection resolve to the provider the user did not pick. Radix's
+ * `DropdownMenuRadioGroup` carries one string per item, so the pair is encoded
+ * into it. (F15)
+ */
+export function encodeModelKey(provider: Provider, modelId: string): string {
+  return `${provider}:${modelId}`
+}
+
+/**
+ * The provider and model a key names, or null if it names neither.
+ *
+ * Split on the FIRST separator only. A provider never contains `:` — it is a
+ * Postgres enum — but a model id may: OpenRouter publishes variants like
+ * `:free` and `:thinking`, and nothing stops one entering the catalog later. A
+ * naive split would quietly truncate such an id to the part before the colon
+ * and resolve to a model that was never chosen.
+ *
+ * Returns null rather than throwing for an unknown provider or an id absent
+ * from the catalog, because the input is a string read back out of the DOM.
+ */
+export function decodeModelKey(key: string): { provider: Provider; modelId: string } | null {
+  const separator = key.indexOf(':')
+  if (separator === -1) return null
+
+  const provider = key.slice(0, separator)
+  const modelId = key.slice(separator + 1)
+
+  if (!isProvider(provider)) return null
+  if (!findModel(provider, modelId)) return null
+
+  return { provider, modelId }
+}
+
+function isProvider(value: string): value is Provider {
+  return (PROVIDER_ORDER as readonly string[]).includes(value)
 }

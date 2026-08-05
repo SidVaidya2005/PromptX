@@ -1,5 +1,7 @@
 import { SHARED_KEY_DAILY_MESSAGE_LIMIT, SHARED_MODEL_ID } from '@/lib/constants'
 
+import { listProviderKeys } from '@/server/data/provider-keys'
+
 import { Chat } from '@/components/chat/Chat'
 
 /**
@@ -11,15 +13,23 @@ import { Chat } from '@/components/chat/Chat'
  * confirmed which id that is.
  *
  * The model defaults to the shared Gemini key's, which is the only thing a user
- * without their own key can reach. Feature 15 puts a picker in the composer.
+ * without their own key can reach. The picker can change it before the first
+ * send, and that choice travels in the request body — there is no row to persist
+ * it to until /api/chat creates one.
+ *
+ * Deliberately no memory of a previously chosen model. Every new conversation
+ * starts on the shared one, which is the only choice guaranteed to work.
  */
-export default function ChatPage() {
+export default async function ChatPage() {
+  const keys = await listProviderKeys()
+
   return (
     <Chat
       conversationId={null}
       initialMessages={[]}
       provider="google"
       modelId={SHARED_MODEL_ID}
+      configuredProviders={keys.map((key) => key.provider)}
       emptyState={
         <div className="flex h-full items-center justify-center p-3xl">
           <p className="max-w-100 text-center text-body-md text-mute">

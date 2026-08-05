@@ -6,23 +6,38 @@ import { ArrowUpIcon, SquareIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
+import { ModelPicker } from '@/components/chat/ModelPicker'
 import { Button } from '@/components/ui/button'
 
+import type { Provider } from '@/types/domain'
+
 type ComposerProps = {
+  provider: Provider
   modelId: string
+  configuredProviders: readonly Provider[]
   isStreaming: boolean
   onSend: (text: string) => void
   onStop: () => void
+  onSelectModel: (provider: Provider, modelId: string) => void
 }
 
 /**
  * The message input, shared by /chat and /chat/[id].
  *
- * Controlled from above: it owns the draft and nothing else. Sending, stopping
- * and the conversation's identity all belong to Chat, which owns the useChat
- * instance — this file would otherwise need a second route to the same server.
+ * Controlled from above: it owns the draft and nothing else. Sending, stopping,
+ * the chosen model and the conversation's identity all belong to Chat, which
+ * owns the useChat instance — this file would otherwise need a second route to
+ * the same server.
  */
-export function Composer({ modelId, isStreaming, onSend, onStop }: ComposerProps) {
+export function Composer({
+  provider,
+  modelId,
+  configuredProviders,
+  isStreaming,
+  onSend,
+  onStop,
+  onSelectModel,
+}: ComposerProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -92,7 +107,19 @@ export function Composer({ modelId, isStreaming, onSend, onStop }: ComposerProps
           )}
         />
 
-        <div className="flex items-center justify-end gap-sm pt-xs">
+        {/* DESIGN.md `composer-toolbar`: model picker, attach button, quota
+            meter, send. The picker leads it; features 28 and 16 fill the middle. */}
+        <div className="flex items-center justify-between gap-sm pt-xs">
+          <ModelPicker
+            provider={provider}
+            modelId={modelId}
+            configuredProviders={configuredProviders}
+            // Choosing mid-stream cannot affect the request already in flight,
+            // and offering it would imply otherwise.
+            disabled={isStreaming}
+            onSelect={onSelectModel}
+          />
+
           {isStreaming ? (
             <Button
               type="button"

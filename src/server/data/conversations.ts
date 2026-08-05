@@ -142,6 +142,45 @@ export async function setGeneratedTitle(id: string, title: string): Promise<bool
 }
 
 /**
+ * Points a conversation at a different model for its next message.
+ *
+ * Returns whether a row actually changed, for the same reason `deleteConversation`
+ * does: RLS makes someone else's conversation invisible rather than forbidden, so
+ * an update that matches nothing reports no error and is indistinguishable from
+ * success. The route turns false into a 404.
+ *
+ * Only `provider` and `model_id` move. `updated_at` is deliberately left alone —
+ * it orders the sidebar by *activity*, and changing the model is not activity.
+ * Touching it here would float a conversation to the top for a click that
+ * produced no message, which is exactly the kind of drift `touchConversation`
+ * exists to make deliberate.
+ *
+ * Nothing already in the thread is rewritten. Each message carries the model
+ * that produced it, so a conversation whose model changed mid-way stays honest
+ * about its own history. (F15)
+ */
+export async function updateConversationModel(
+  id: string,
+  model: { provider: Provider; modelId: string },
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ provider: model.provider, model_id: model.modelId })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] updateConversationModel failed', error)
+    throw new Error('Failed to change the model')
+  }
+
+  return data !== null
+}
+
+/**
  * Deletes a conversation. Messages and attachments follow by `on delete cascade`.
  *
  * Returns whether a row actually went. The distinction matters because RLS makes
