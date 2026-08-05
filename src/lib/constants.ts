@@ -133,6 +133,28 @@ export const SHARED_KEY_MONTHLY_USD_CEILING = Number(
   process.env.NEXT_PUBLIC_SHARED_KEY_MONTHLY_USD_CEILING ?? 10,
 )
 
+/**
+ * The rate card for SHARED_MODEL_ID, in US dollars per million tokens.
+ *
+ * Read from https://ai.google.dev/gemini-api/docs/pricing on 2026-08-05 —
+ * $1.50 input, $7.50 output for Gemini 3.6 Flash, paid tier. Not written from
+ * memory: CLAUDE.md's authority order puts the vendor's own page above anything
+ * recalled, and a wrong figure here does not fail, it silently mis-prices the
+ * ledger a circuit breaker is read off.
+ *
+ * Deliberately NOT a NEXT_PUBLIC_ variable, unlike the two limits above. No
+ * browser needs these — the figure is never displayed, only accumulated
+ * server-side — so there is nothing to inline and nothing to keep in step
+ * across a rebuild.
+ *
+ * This pairs with SHARED_MODEL_ID being pinned to a version rather than an
+ * alias. An alias that moved to differently-priced weights would leave these
+ * numbers describing a model that is no longer the one being billed, with
+ * nothing on screen to say so. Re-check both together.
+ */
+export const SHARED_KEY_INPUT_USD_PER_MILLION = 1.5
+export const SHARED_KEY_OUTPUT_USD_PER_MILLION = 7.5
+
 /** Show the quota warning in the composer at this many remaining messages. */
 export const QUOTA_WARNING_THRESHOLD = 5
 

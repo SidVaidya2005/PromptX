@@ -66,16 +66,19 @@ export async function resolveModel(
     throw new MissingKeyError(provider)
   }
 
-  // Claims one slot atomically, or throws QuotaExceededError (429). On this side
-  // of the return by design: the caller has written nothing yet, so a refusal
-  // leaves no conversation and no prompt without an answer.
+  // Both shared-key limits, in one call. It checks the global monthly breaker
+  // first and throws BudgetExhaustedError (503), then claims one daily slot
+  // atomically or throws QuotaExceededError (429). That ordering lives inside
+  // reserveSharedSlot rather than here, so there is no path through this file
+  // that could claim a slot without checking the breaker.
+  //
+  // On this side of the return by design: the caller has written nothing yet, so
+  // either refusal leaves no conversation and no prompt without an answer.
   //
   // Only this branch is reached by a keyless user. A caller with their own key
   // returned above, which is what keeps them out of the quota path entirely
-  // rather than exempting them from it by a condition somebody has to remember.
-  //
-  // FEATURE 17 checks the global circuit breaker immediately BEFORE this line —
-  // a tripped breaker must refuse without consuming anybody's daily slot.
+  // rather than exempting them from it by a condition somebody has to remember —
+  // and is why a tripped breaker cannot affect them.
   await reserveSharedSlot(userId)
 
   return {
@@ -137,11 +140,9 @@ function instantiate(provider: Provider, modelId: string, apiKey: string): Langu
  * It still lives in this file rather than in the caller, because
  * `SHARED_GEMINI_API_KEY` is read here and nowhere else.
  *
- * FEATURE 17: the tokens this model spends are real money and belong in
- * `shared_key_budget`. The ledger, the service-role client, and
- * `record_shared_tokens` all arrive with `src/server/quota.ts` at that feature —
- * see the reconciliation note in `src/server/titles.ts`. What must never be
- * added is `reserveSharedSlot()`: accounted, not charged.
+ * The tokens this model spends are real money and go to `shared_key_budget`,
+ * through `recordSharedBudgetTokens()` in the caller. What must never be added
+ * is `reserveSharedSlot()`: accounted, not charged.
  */
 export function sharedTitleModel(): LanguageModel {
   return instantiate('google', SHARED_MODEL_ID, serverEnv.SHARED_GEMINI_API_KEY)
