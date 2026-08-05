@@ -379,6 +379,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - The month rolling over resets the accumulator and clears `tripped_at`
 - The only permitted use of `createServiceRoleClient()` in the codebase
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **`estimated_usd` is derived from the cumulative token totals, never accumulated per call.** Measured: one title-sized call is $0.00051, which stores as $0.0005 in a `numeric(10,4)` column — so ten of them come to $0.0050 accumulated against a true $0.0051. The stronger reason is that a separately accumulated dollar column would be a second independent record of the same fact, free to drift from the tokens it claims to price
+- **The availability check is scoped to the current `period_month`, and omitting that term is a deadlock rather than a slow reset.** A breaker tripped in one month would refuse in the next, and the reset that would clear it lives on a write path the refusal itself blocks
+- **The breaker check lives inside `reserveSharedSlot()`, not at its call site**, so no path can claim a daily slot without checking first. Proven by the assertion that a tripped breaker never even constructs the reservation client
+- **`isSharedKeyAvailable()` fails open**, because the authoritative spend cap is the provider-side budget limit (feature 38) and failing closed would trade a real outage for a few hypothetical cents
+- **Titling writes `shared_key_budget` only**, through a `recordSharedBudgetTokens()` that takes no user id — the same structural trick as `sharedTitleModel()`. Observed end to end: one message left `message_count = 1` while the ledger held 462 tokens against the message's own 88
+- **Two pages outside §17's UI list were corrected**, because both stated the daily allowance as a fact that is false while tripped: `/settings/keys` and `/chat`'s empty state
+
 ---
 
 ## Phase 3 — Conversation craft
