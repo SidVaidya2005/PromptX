@@ -28,6 +28,11 @@ import {
   listByConversation,
 } from '@/server/data/messages'
 import { MissingKeyError, resolveModel, UnknownModelError } from '@/server/providers'
+import {
+  QuotaExceededError,
+  recordSharedKeyTokens,
+  releaseSharedSlot,
+} from '@/server/quota'
 
 /**
  * Documents intent. On Render every route is Node already, so nothing can
@@ -99,6 +104,17 @@ export async function POST(request: Request) {
       )
     }
 
+    if (error instanceof QuotaExceededError) {
+      // Before the generic arm below, or a refusal the application makes on
+      // purpose would be reported as a fault it did not intend. Nothing was
+      // written: resolveModel claims the slot before this handler persists
+      // anything, so the thread is exactly as the user left it.
+      return NextResponse.json(
+        { error: error.message, code: 'quota_exceeded' },
+        { status: 429 },
+      )
+    }
+
     if (error instanceof UnknownModelError) {
       // The error's own message, unlike the branch above — it already
       // distinguishes "no such model" from "PromptX ships none for this
@@ -163,6 +179,12 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[api/chat] could not start the exchange', error)
 
+    // The slot was claimed before any of this ran, and no generation is going
+    // to happen now. The reconciliation sweep would eventually lower the count,
+    // but it exists for a process that DIED — leaving a failure we can see to be
+    // cleaned up by a job ten minutes later charges the user for the interval.
+    if (usedSharedKey) await releaseSharedSlot(user.id)
+
     // PostgREST cannot span a transaction, so a conversation created a moment
     // ago can outlive the message that justified it.
     if (createdConversationId) {
@@ -210,12 +232,20 @@ export async function POST(request: Request) {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
       })
+
+      // The slot was claimed before the request went out; this only reconciles
+      // what it actually cost. Accounting, never enforcement — nothing is ever
+      // refused on the strength of these numbers.
+      if (usedSharedKey) await recordSharedKeyTokens(user.id, usage)
     },
     onAbort: async () => {
       await failMessage(assistantMessageId, {
         content: streamedText,
         errorMessage: 'Generation stopped',
       })
+
+      // Stopping is the user's decision, and they still did not get an answer.
+      if (usedSharedKey) await releaseSharedSlot(user.id)
     },
     onError: async ({ error }) => {
       console.error('[api/chat] stream failed', error)
@@ -224,6 +254,11 @@ export async function POST(request: Request) {
         content: streamedText,
         errorMessage: 'The model could not finish this response.',
       })
+
+      // A failed generation must not cost a message. Note this and onAbort can
+      // both be reached for one request; the refund is floored at zero in SQL so
+      // a double release cannot hand out a free message.
+      if (usedSharedKey) await releaseSharedSlot(user.id)
     },
   })
 

@@ -11,6 +11,7 @@ import { findModel, isSharedModel, MODEL_CATALOG } from '@/lib/models'
 
 import { serverEnv } from '@/server/env'
 import { getDecryptedKey } from '@/server/keys'
+import { reserveSharedSlot } from '@/server/quota'
 
 import type { Provider } from '@/types/domain'
 
@@ -36,6 +37,7 @@ export type ResolvedModel = {
  * @throws UnknownModelError when the model is not in `src/lib/models.ts` (400).
  * @throws MissingKeyError when the provider has no key and is not the shared
  *   fallback (400).
+ * @throws QuotaExceededError when the shared key's daily allowance is spent (429).
  */
 export async function resolveModel(
   userId: string,
@@ -64,12 +66,17 @@ export async function resolveModel(
     throw new MissingKeyError(provider)
   }
 
-  // FEATURE 16 INSERTS THE QUOTA RESERVATION HERE:
-  //   await reserveSharedSlot(userId)
-  // It claims a slot atomically and throws QuotaExceededError (429) or
-  // BudgetExhaustedError (503). It belongs on this side of the return, before
-  // the caller has written anything, so a refusal leaves no trace.
-  void userId
+  // Claims one slot atomically, or throws QuotaExceededError (429). On this side
+  // of the return by design: the caller has written nothing yet, so a refusal
+  // leaves no conversation and no prompt without an answer.
+  //
+  // Only this branch is reached by a keyless user. A caller with their own key
+  // returned above, which is what keeps them out of the quota path entirely
+  // rather than exempting them from it by a condition somebody has to remember.
+  //
+  // FEATURE 17 checks the global circuit breaker immediately BEFORE this line —
+  // a tripped breaker must refuse without consuming anybody's daily slot.
+  await reserveSharedSlot(userId)
 
   return {
     model: instantiate('google', SHARED_MODEL_ID, serverEnv.SHARED_GEMINI_API_KEY),

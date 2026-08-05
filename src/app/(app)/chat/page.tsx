@@ -1,6 +1,7 @@
 import { SHARED_KEY_DAILY_MESSAGE_LIMIT, SHARED_MODEL_ID } from '@/lib/constants'
 
 import { listProviderKeys } from '@/server/data/provider-keys'
+import { getTodaysUsage } from '@/server/data/shared-key-usage'
 
 import { Chat } from '@/components/chat/Chat'
 
@@ -21,7 +22,7 @@ import { Chat } from '@/components/chat/Chat'
  * starts on the shared one, which is the only choice guaranteed to work.
  */
 export default async function ChatPage() {
-  const keys = await listProviderKeys()
+  const [keys, used] = await Promise.all([listProviderKeys(), getTodaysUsage()])
 
   return (
     <Chat
@@ -30,6 +31,7 @@ export default async function ChatPage() {
       provider="google"
       modelId={SHARED_MODEL_ID}
       configuredProviders={keys.map((key) => key.provider)}
+      remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
       emptyState={
         <div className="flex h-full items-center justify-center p-3xl">
           <p className="max-w-100 text-center text-body-md text-mute">

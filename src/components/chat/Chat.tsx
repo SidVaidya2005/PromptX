@@ -22,6 +22,8 @@ type ChatProps = {
   modelId: string
   /** Providers this user holds a key for, for the picker's disabled states. */
   configuredProviders: readonly Provider[]
+  /** Shared-key messages left today, read on the server for this render. */
+  remaining: number
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -50,6 +52,7 @@ export function Chat({
   provider,
   modelId,
   configuredProviders,
+  remaining,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
@@ -191,6 +194,7 @@ export function Chat({
         provider={model.provider}
         modelId={model.modelId}
         configuredProviders={configuredProviders}
+        remaining={remaining}
         onSelectModel={selectModel}
         isStreaming={isStreaming}
         onSend={(text) => void sendMessage({ text })}

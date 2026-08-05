@@ -1,12 +1,16 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import Link from 'next/link'
 
 import { ArrowUpIcon, SquareIcon } from 'lucide-react'
 
+import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
+import { willUseSharedKey } from '@/lib/models'
 import { cn } from '@/lib/utils'
 
 import { ModelPicker } from '@/components/chat/ModelPicker'
+import { QuotaMeter } from '@/components/chat/QuotaMeter'
 import { Button } from '@/components/ui/button'
 
 import type { Provider } from '@/types/domain'
@@ -15,6 +19,8 @@ type ComposerProps = {
   provider: Provider
   modelId: string
   configuredProviders: readonly Provider[]
+  /** Shared-key messages left today. Irrelevant while a personal key answers. */
+  remaining: number
   isStreaming: boolean
   onSend: (text: string) => void
   onStop: () => void
@@ -33,6 +39,7 @@ export function Composer({
   provider,
   modelId,
   configuredProviders,
+  remaining,
   isStreaming,
   onSend,
   onStop,
@@ -41,7 +48,14 @@ export function Composer({
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const canSend = text.trim().length > 0 && !isStreaming
+  // Whether the allowance applies at all is a property of the SELECTED model,
+  // not of the user. Someone with an OpenRouter key who has spent their shared
+  // messages is not out of anything — switching models makes this false and the
+  // composer works again, which is exactly what resolveModel() would have done.
+  const onSharedKey = willUseSharedKey(provider, modelId, configuredProviders)
+  const exhausted = onSharedKey && remaining <= 0
+
+  const canSend = text.trim().length > 0 && !isStreaming && !exhausted
 
   function submit() {
     if (!canSend) return
@@ -75,6 +89,23 @@ export function Composer({
 
   return (
     <div className="mx-auto w-full max-w-180 px-lg pb-lg">
+      {/* Above the composer rather than inside the toolbar: it is a sentence,
+          not a control, and it has to stay legible at 360px where the toolbar is
+          already carrying the picker and the send button. */}
+      {exhausted && (
+        <p role="status" className="pb-sm text-body-sm text-danger">
+          You&rsquo;ve used your {SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages for
+          today.{' '}
+          <Link
+            href="/settings/keys"
+            className="underline underline-offset-2 hover:text-ink"
+          >
+            Add your own API key
+          </Link>{' '}
+          to keep going, or pick a model you already have a key for.
+        </p>
+      )}
+
       <form
         onSubmit={(event) => {
           event.preventDefault()
@@ -93,7 +124,10 @@ export function Composer({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           rows={1}
-          placeholder={`Message ${modelId}`}
+          disabled={exhausted}
+          placeholder={
+            exhausted ? 'Pick another model or add a key' : `Message ${modelId}`
+          }
           aria-label="Message"
           className={cn(
             // DESIGN.md `composer-input`: transparent, ink text, mute
@@ -108,17 +142,23 @@ export function Composer({
         />
 
         {/* DESIGN.md `composer-toolbar`: model picker, attach button, quota
-            meter, send. The picker leads it; features 28 and 16 fill the middle. */}
+            meter, send. Feature 28 fills the remaining gap. */}
         <div className="flex items-center justify-between gap-sm pt-xs">
-          <ModelPicker
-            provider={provider}
-            modelId={modelId}
-            configuredProviders={configuredProviders}
-            // Choosing mid-stream cannot affect the request already in flight,
-            // and offering it would imply otherwise.
-            disabled={isStreaming}
-            onSelect={onSelectModel}
-          />
+          <div className="flex min-w-0 items-center gap-sm">
+            <ModelPicker
+              provider={provider}
+              modelId={modelId}
+              configuredProviders={configuredProviders}
+              // Choosing mid-stream cannot affect the request already in flight,
+              // and offering it would imply otherwise.
+              disabled={isStreaming}
+              onSelect={onSelectModel}
+            />
+
+            {/* Only while the shared key would answer. A user on their own key
+                is not spending this allowance, so a count of it is noise. */}
+            {onSharedKey && <QuotaMeter remaining={remaining} />}
+          </div>
 
           {isStreaming ? (
             <Button

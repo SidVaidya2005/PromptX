@@ -1,6 +1,7 @@
 import { PROVIDER_LABELS, SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 
 import { listProviderKeys } from '@/server/data/provider-keys'
+import { getTodaysUsage } from '@/server/data/shared-key-usage'
 
 import { KeyRow } from '@/components/settings/KeyRow'
 
@@ -28,7 +29,7 @@ const ADDED_ON = new Intl.DateTimeFormat('en-GB', {
 })
 
 export default async function KeysPage() {
-  const keys = await listProviderKeys()
+  const [keys, used] = await Promise.all([listProviderKeys(), getTodaysUsage()])
 
   const byProvider = new Map(keys.map((key) => [key.provider, key]))
 
@@ -42,9 +43,13 @@ export default async function KeysPage() {
         back to you.
       </p>
 
+      {/* The allowance is a UTC day — the boundary shared_key_usage stores and
+          the sidebar already groups on. Said out loud so that someone near
+          midnight in their own timezone does not read the reset as a fault. */}
       <p className="mt-sm text-body-sm text-mute">
         Without a key of your own you get {SHARED_KEY_DAILY_MESSAGE_LIMIT} shared
-        messages a day on Gemini Flash.
+        messages a day on Gemini Flash. You have used {used} of them today; the
+        count resets at midnight UTC.
       </p>
 
       <div className="mt-xl">

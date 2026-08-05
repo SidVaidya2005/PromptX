@@ -9,6 +9,7 @@ import {
   isSharedModel,
   MODEL_CATALOG,
   PROVIDER_ORDER,
+  willUseSharedKey,
 } from '@/lib/models'
 
 import type { Provider } from '@/types/domain'
@@ -172,6 +173,40 @@ describe('availability', () => {
     expect(other).toBeDefined()
     expect(isModelAvailable('google', other!.id, [])).toBe(false)
     expect(isModelAvailable('google', other!.id, ['google'])).toBe(true)
+  })
+
+  it('spends the shared allowance only for the model the shared key serves', async () => {
+    // Three surfaces read this and must agree: whether the meter is shown,
+    // whether an exhausted allowance locks the composer, and whether the server
+    // claims a slot. Written out literally rather than through isSharedModel,
+    // for the reason the neighbouring test records.
+    for (const provider of PROVIDER_ORDER) {
+      for (const model of MODEL_CATALOG[provider]) {
+        const shared = willUseSharedKey(provider, model.id, [])
+        const isTheSharedOne = provider === 'google' && model.id === SHARED_MODEL_ID
+
+        expect(shared, `${provider} → ${model.id}`).toBe(isTheSharedOne)
+      }
+    }
+  })
+
+  it('stops spending the allowance once the caller has their own Google key', async () => {
+    // The same model, now billed to its owner. The meter must disappear and the
+    // exhausted lock must lift, because resolveModel() would take the BYOK
+    // branch and never reach the reservation.
+    expect(willUseSharedKey('google', SHARED_MODEL_ID, [])).toBe(true)
+    expect(willUseSharedKey('google', SHARED_MODEL_ID, ['google'])).toBe(false)
+  })
+
+  it('is not merely the inverse of availability', async () => {
+    // A model can be available BECAUSE the caller has a key, in which case the
+    // shared quota has nothing to do with the request. Both must be true at
+    // once, which is why this is its own function rather than a negation.
+    const openRouterModel = MODEL_CATALOG.openrouter[0]
+
+    expect(openRouterModel).toBeDefined()
+    expect(isModelAvailable('openrouter', openRouterModel!.id, ['openrouter'])).toBe(true)
+    expect(willUseSharedKey('openrouter', openRouterModel!.id, ['openrouter'])).toBe(false)
   })
 
   it('does not let one provider’s key unlock another’s models', async () => {

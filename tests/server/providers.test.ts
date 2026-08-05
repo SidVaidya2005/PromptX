@@ -10,11 +10,16 @@ import { MODEL_CATALOG } from '@/lib/models'
  * network call, so the real factories are used; no test in this project may
  * spend money.
  *
- * `@/server/keys` is mocked rather than the vault or the database beneath it.
- * The subject is which branch runs, and mocking deeper would mean building
- * sealed fixtures to prove something this file does not claim. It is also not
- * optional: importing providers.ts now reaches getDecryptedKey → getSealedKey →
- * createServerSupabaseClient → cookies(), which throws outside a request scope.
+ * `@/server/keys` and `@/server/quota` are both mocked rather than the vault or
+ * the database beneath them. The subject is which branch runs, and mocking
+ * deeper would mean building sealed fixtures and usage rows to prove something
+ * this file does not claim. Neither is optional: importing providers.ts reaches
+ * getDecryptedKey → getSealedKey → createServerSupabaseClient → cookies() and
+ * reserveSharedSlot → the same, both of which throw outside a request scope.
+ *
+ * Whether the reservation itself is correct is `tests/server/quota.test.ts`,
+ * against a real database with a real session — atomicity is a property of
+ * Postgres and a mock cannot have it.
  *
  * The whole secret environment is stubbed and the module imported fresh, because
  * providers.ts reads serverEnv at load. Same reason as tests/server/keys.test.ts,
@@ -41,6 +46,7 @@ const OTHER_GOOGLE_MODEL = 'gemini-3.5-flash'
 type Providers = typeof import('@/server/providers')
 
 const getDecryptedKey = vi.fn<() => Promise<string | null>>()
+const reserveSharedSlot = vi.fn<() => Promise<number>>()
 
 /**
  * Loads providers.ts with the caller's stored key stubbed to `key`.
@@ -56,6 +62,7 @@ function loadProviders(key: string | null): Promise<Providers> {
 
   getDecryptedKey.mockResolvedValue(key)
   vi.doMock('@/server/keys', () => ({ getDecryptedKey }))
+  vi.doMock('@/server/quota', () => ({ reserveSharedSlot }))
 
   return import('@/server/providers')
 }
@@ -63,6 +70,8 @@ function loadProviders(key: string | null): Promise<Providers> {
 beforeEach(() => {
   vi.resetModules()
   getDecryptedKey.mockReset()
+  reserveSharedSlot.mockReset()
+  reserveSharedSlot.mockResolvedValue(1)
 })
 
 describe('resolveModel — the catalog as a boundary', () => {
@@ -183,6 +192,51 @@ describe('resolveModel — the shared key as the only fallback', () => {
     await expect(
       resolveModel(USER_ID, 'openrouter', 'anthropic/claude-opus-5'),
     ).rejects.toMatchObject({ provider: 'openrouter', name: 'MissingKeyError' })
+  })
+
+  it('claims a slot for the caller it is about to spend one on', async () => {
+    const { resolveModel } = await loadProviders(null)
+
+    await resolveModel(USER_ID, 'google', SHARED_MODEL_ID)
+
+    expect(reserveSharedSlot).toHaveBeenCalledWith(USER_ID)
+  })
+
+  it('claims nothing when it refuses', async () => {
+    // "A refusal leaves no trace" reaches further than the database writes in
+    // the route: a missing key must not cost a slot either, or a user could be
+    // charged their daily allowance by asking for a provider they never
+    // configured.
+    const { resolveModel } = await loadProviders(null)
+
+    await expect(resolveModel(USER_ID, 'openrouter', 'anthropic/claude-opus-5')).rejects.toThrow()
+    await expect(resolveModel(USER_ID, 'google', 'gemini-3-ultra')).rejects.toThrow()
+
+    expect(reserveSharedSlot).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveModel — who is quota-checked', () => {
+  it('never checks the quota for a caller with their own key', async () => {
+    // The stated invariant, and the reason the BYOK branch returns EARLY rather
+    // than being exempted by a condition further down that somebody has to
+    // remember. Their requests must succeed even when the shared allowance —
+    // and at feature 17 the global breaker — is spent.
+    const { resolveModel } = await loadProviders(TEST_KEY)
+
+    await resolveModel(USER_ID, 'google', SHARED_MODEL_ID)
+    await resolveModel(USER_ID, 'openrouter', 'anthropic/claude-opus-5')
+
+    expect(reserveSharedSlot).not.toHaveBeenCalled()
+  })
+
+  it('lets a quota refusal out rather than turning it into a model', async () => {
+    const quotaSpent = new Error('spent')
+    reserveSharedSlot.mockRejectedValue(quotaSpent)
+
+    const { resolveModel } = await loadProviders(null)
+
+    await expect(resolveModel(USER_ID, 'google', SHARED_MODEL_ID)).rejects.toBe(quotaSpent)
   })
 })
 

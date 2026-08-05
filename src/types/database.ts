@@ -322,6 +322,19 @@ export type Database = {
     Functions: {
       reap_attachments_tick: { Args: never; Returns: undefined }
       reconcile_shared_key_usage: { Args: never; Returns: undefined }
+      record_shared_tokens: {
+        Args: {
+          p_input_tokens: number
+          p_output_tokens: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      release_shared_slot: { Args: { p_user_id: string }; Returns: undefined }
+      reserve_shared_slot: {
+        Args: { p_limit: number; p_user_id: string }
+        Returns: number
+      }
     }
     Enums: {
       message_role: "user" | "assistant"

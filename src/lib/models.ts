@@ -183,6 +183,29 @@ export function isModelAvailable(
 }
 
 /**
+ * Whether sending to this model would spend the shared allowance.
+ *
+ * True exactly when `resolveModel()` would return `usedSharedKey: true`, and it
+ * is the inverse condition to `isModelAvailable`'s first term rather than a
+ * restatement of it: a model can be available *because* the caller has a key,
+ * in which case the shared quota has nothing to do with the request.
+ *
+ * Three surfaces read this and must agree — whether the quota meter is shown,
+ * whether an exhausted allowance locks the composer, and whether the server
+ * claims a slot. The first two are decided in the browser and the third in
+ * Postgres, so a second spelling of the rule would show a meter to somebody it
+ * does not apply to, or lock a composer over an allowance their request would
+ * never touch. (F16)
+ */
+export function willUseSharedKey(
+  provider: Provider,
+  modelId: string,
+  configuredProviders: readonly Provider[],
+): boolean {
+  return !configuredProviders.includes(provider) && isSharedModel(provider, modelId)
+}
+
+/**
  * A single string identifying one catalog entry, for a Radix radio group.
  *
  * A model id alone will not do. `Gemini 3.6 Flash` exists under both `google`
