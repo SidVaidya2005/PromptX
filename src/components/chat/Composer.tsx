@@ -21,6 +21,8 @@ type ComposerProps = {
   configuredProviders: readonly Provider[]
   /** Shared-key messages left today. Irrelevant while a personal key answers. */
   remaining: number
+  /** False while the global monthly ceiling is spent. Also irrelevant to a BYOK model. */
+  sharedKeyAvailable: boolean
   isStreaming: boolean
   onSend: (text: string) => void
   onStop: () => void
@@ -40,6 +42,7 @@ export function Composer({
   modelId,
   configuredProviders,
   remaining,
+  sharedKeyAvailable,
   isStreaming,
   onSend,
   onStop,
@@ -55,7 +58,16 @@ export function Composer({
   const onSharedKey = willUseSharedKey(provider, modelId, configuredProviders)
   const exhausted = onSharedKey && remaining <= 0
 
-  const canSend = text.trim().length > 0 && !isStreaming && !exhausted
+  // The other axis, and it is global rather than personal: the month's budget is
+  // spent for everybody. Nothing this user does changes it, which is why the
+  // message below offers a key rather than tomorrow.
+  const budgetSpent = onSharedKey && !sharedKeyAvailable
+
+  // Either one refuses. Kept as separate booleans rather than one `blocked`,
+  // because they say different things and the composer has to say the right one.
+  const blocked = exhausted || budgetSpent
+
+  const canSend = text.trim().length > 0 && !isStreaming && !blocked
 
   function submit() {
     if (!canSend) return
@@ -92,10 +104,12 @@ export function Composer({
       {/* Above the composer rather than inside the toolbar: it is a sentence,
           not a control, and it has to stay legible at 360px where the toolbar is
           already carrying the picker and the send button. */}
-      {exhausted && (
+      {/* The breaker wins when both apply. A daily allowance that resets at
+          midnight is the smaller and more hopeful of the two facts, and leading
+          with it would tell someone to come back tomorrow to find the same wall. */}
+      {budgetSpent ? (
         <p role="status" className="pb-sm text-body-sm text-danger">
-          You&rsquo;ve used your {SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages for
-          today.{' '}
+          Shared access is temporarily unavailable.{' '}
           <Link
             href="/settings/keys"
             className="underline underline-offset-2 hover:text-ink"
@@ -104,6 +118,20 @@ export function Composer({
           </Link>{' '}
           to keep going, or pick a model you already have a key for.
         </p>
+      ) : (
+        exhausted && (
+          <p role="status" className="pb-sm text-body-sm text-danger">
+            You&rsquo;ve used your {SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages for
+            today.{' '}
+            <Link
+              href="/settings/keys"
+              className="underline underline-offset-2 hover:text-ink"
+            >
+              Add your own API key
+            </Link>{' '}
+            to keep going, or pick a model you already have a key for.
+          </p>
+        )
       )}
 
       <form
@@ -124,9 +152,9 @@ export function Composer({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           rows={1}
-          disabled={exhausted}
+          disabled={blocked}
           placeholder={
-            exhausted ? 'Pick another model or add a key' : `Message ${modelId}`
+            blocked ? 'Pick another model or add a key' : `Message ${modelId}`
           }
           aria-label="Message"
           className={cn(
@@ -156,8 +184,11 @@ export function Composer({
             />
 
             {/* Only while the shared key would answer. A user on their own key
-                is not spending this allowance, so a count of it is noise. */}
-            {onSharedKey && <QuotaMeter remaining={remaining} />}
+                is not spending this allowance, so a count of it is noise — and
+                so is a count of messages nobody can send, which is why the
+                breaker hides it rather than leaving "17 of 20 left" above a
+                composer that refuses all seventeen. */}
+            {onSharedKey && !budgetSpent && <QuotaMeter remaining={remaining} />}
           </div>
 
           {isStreaming ? (

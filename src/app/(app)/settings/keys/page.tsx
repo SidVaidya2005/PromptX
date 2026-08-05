@@ -2,6 +2,7 @@ import { PROVIDER_LABELS, SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants
 
 import { listProviderKeys } from '@/server/data/provider-keys'
 import { getTodaysUsage } from '@/server/data/shared-key-usage'
+import { isSharedKeyAvailable } from '@/server/quota'
 
 import { KeyRow } from '@/components/settings/KeyRow'
 
@@ -29,7 +30,11 @@ const ADDED_ON = new Intl.DateTimeFormat('en-GB', {
 })
 
 export default async function KeysPage() {
-  const [keys, used] = await Promise.all([listProviderKeys(), getTodaysUsage()])
+  const [keys, used, sharedKeyAvailable] = await Promise.all([
+    listProviderKeys(),
+    getTodaysUsage(),
+    isSharedKeyAvailable(),
+  ])
 
   const byProvider = new Map(keys.map((key) => [key.provider, key]))
 
@@ -43,14 +48,26 @@ export default async function KeysPage() {
         back to you.
       </p>
 
-      {/* The allowance is a UTC day — the boundary shared_key_usage stores and
-          the sidebar already groups on. Said out loud so that someone near
-          midnight in their own timezone does not read the reset as a fault. */}
-      <p className="mt-sm text-body-sm text-mute">
-        Without a key of your own you get {SHARED_KEY_DAILY_MESSAGE_LIMIT} shared
-        messages a day on Gemini Flash. You have used {used} of them today; the
-        count resets at midnight UTC.
-      </p>
+      {/* Not in build-plan.md §17's UI list, which names only the composer.
+          Added because this page states the daily allowance as a fact, and while
+          the breaker is tripped that sentence is simply untrue — a settings page
+          that contradicts the composer three clicks away is worse than one that
+          says nothing. */}
+      {sharedKeyAvailable ? (
+        /* The allowance is a UTC day — the boundary shared_key_usage stores and
+           the sidebar already groups on. Said out loud so that someone near
+           midnight in their own timezone does not read the reset as a fault. */
+        <p className="mt-sm text-body-sm text-mute">
+          Without a key of your own you get {SHARED_KEY_DAILY_MESSAGE_LIMIT} shared
+          messages a day on Gemini Flash. You have used {used} of them today; the
+          count resets at midnight UTC.
+        </p>
+      ) : (
+        <p className="mt-sm text-body-sm text-warn">
+          Shared access is temporarily unavailable, so the free Gemini Flash
+          messages are paused for everyone. A key of your own is unaffected.
+        </p>
+      )}
 
       <div className="mt-xl">
         {PROVIDERS.map((provider) => {

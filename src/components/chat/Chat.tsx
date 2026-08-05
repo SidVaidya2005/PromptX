@@ -24,6 +24,8 @@ type ChatProps = {
   configuredProviders: readonly Provider[]
   /** Shared-key messages left today, read on the server for this render. */
   remaining: number
+  /** False while the global monthly ceiling is spent. Irrelevant to a BYOK model. */
+  sharedKeyAvailable: boolean
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -53,6 +55,7 @@ export function Chat({
   modelId,
   configuredProviders,
   remaining,
+  sharedKeyAvailable,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
@@ -195,6 +198,7 @@ export function Chat({
         modelId={model.modelId}
         configuredProviders={configuredProviders}
         remaining={remaining}
+        sharedKeyAvailable={sharedKeyAvailable}
         onSelectModel={selectModel}
         isStreaming={isStreaming}
         onSend={(text) => void sendMessage({ text })}

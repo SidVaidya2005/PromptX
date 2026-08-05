@@ -7,6 +7,7 @@ import { getConversation } from '@/server/data/conversations'
 import { listByConversation } from '@/server/data/messages'
 import { listProviderKeys } from '@/server/data/provider-keys'
 import { getTodaysUsage } from '@/server/data/shared-key-usage'
+import { isSharedKeyAvailable } from '@/server/quota'
 
 import { Chat } from '@/components/chat/Chat'
 
@@ -34,10 +35,11 @@ export default async function ConversationPage({ params }: ConversationPageProps
 
   // Concurrent: neither needs the other, and this page already costs one round
   // trip before it can know the conversation exists.
-  const [messages, keys, used] = await Promise.all([
+  const [messages, keys, used, sharedKeyAvailable] = await Promise.all([
     listByConversation(id),
     listProviderKeys(),
     getTodaysUsage(),
+    isSharedKeyAvailable(),
   ])
 
   return (
@@ -57,6 +59,7 @@ export default async function ConversationPage({ params }: ConversationPageProps
       modelId={conversation.model_id}
       configuredProviders={keys.map((key) => key.provider)}
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
+      sharedKeyAvailable={sharedKeyAvailable}
     />
   )
 }

@@ -2,6 +2,7 @@ import { SHARED_KEY_DAILY_MESSAGE_LIMIT, SHARED_MODEL_ID } from '@/lib/constants
 
 import { listProviderKeys } from '@/server/data/provider-keys'
 import { getTodaysUsage } from '@/server/data/shared-key-usage'
+import { isSharedKeyAvailable } from '@/server/quota'
 
 import { Chat } from '@/components/chat/Chat'
 
@@ -22,7 +23,14 @@ import { Chat } from '@/components/chat/Chat'
  * starts on the shared one, which is the only choice guaranteed to work.
  */
 export default async function ChatPage() {
-  const [keys, used] = await Promise.all([listProviderKeys(), getTodaysUsage()])
+  // Concurrent, so the breaker read costs load rather than latency. It is read
+  // unconditionally even for a user with keys: knowing whether it applies means
+  // knowing which providers they hold, which is one of the reads in this list.
+  const [keys, used, sharedKeyAvailable] = await Promise.all([
+    listProviderKeys(),
+    getTodaysUsage(),
+    isSharedKeyAvailable(),
+  ])
 
   return (
     <Chat
@@ -32,11 +40,16 @@ export default async function ChatPage() {
       modelId={SHARED_MODEL_ID}
       configuredProviders={keys.map((key) => key.provider)}
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
+      sharedKeyAvailable={sharedKeyAvailable}
       emptyState={
         <div className="flex h-full items-center justify-center p-3xl">
+          {/* Offering the daily allowance while the breaker is tripped puts a
+              promise directly above the composer's refusal of it — the two are
+              adjacent on screen, so the contradiction is not subtle. */}
           <p className="max-w-100 text-center text-body-md text-mute">
-            Start a conversation. You have {SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages
-            a day before you need a key of your own.
+            {sharedKeyAvailable
+              ? `Start a conversation. You have ${SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages a day before you need a key of your own.`
+              : 'Start a conversation. Shared access is paused right now, so this needs a key of your own.'}
           </p>
         </div>
       }
