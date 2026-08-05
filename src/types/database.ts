@@ -320,8 +320,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      is_shared_key_available: { Args: never; Returns: boolean }
       reap_attachments_tick: { Args: never; Returns: undefined }
       reconcile_shared_key_usage: { Args: never; Returns: undefined }
+      record_shared_budget: {
+        Args: {
+          p_ceiling_usd: number
+          p_input_tokens: number
+          p_input_usd_per_million: number
+          p_output_tokens: number
+          p_output_usd_per_million: number
+        }
+        Returns: undefined
+      }
       record_shared_tokens: {
         Args: {
           p_input_tokens: number
