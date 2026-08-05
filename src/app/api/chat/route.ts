@@ -27,7 +27,7 @@ import {
   failMessage,
   listByConversation,
 } from '@/server/data/messages'
-import { MissingKeyError, resolveModel } from '@/server/providers'
+import { MissingKeyError, resolveModel, UnknownModelError } from '@/server/providers'
 
 /**
  * Documents intent. On Render every route is Node already, so nothing can
@@ -95,6 +95,18 @@ export async function POST(request: Request) {
     if (error instanceof MissingKeyError) {
       return NextResponse.json(
         { error: `No API key configured for ${error.provider}`, code: 'missing_key' },
+        { status: 400 },
+      )
+    }
+
+    if (error instanceof UnknownModelError) {
+      // The error's own message, unlike the branch above — it already
+      // distinguishes "no such model" from "PromptX ships none for this
+      // provider yet", and rebuilding that distinction here would put the same
+      // rule in two files. It names a provider and a model id the client just
+      // sent us, so there is nothing in it that is not already theirs.
+      return NextResponse.json(
+        { error: error.message, code: 'unknown_model' },
         { status: 400 },
       )
     }
