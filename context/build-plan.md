@@ -350,7 +350,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `QuotaExceededError` mapped to `429` with `code: 'quota_exceeded'`
 - Users with their own key bypass reservation entirely
 - Vitest at the boundary: the 19th and 20th succeed, the 21st is refused; a release restores exactly one slot and cannot drive the counter below zero
-- Vitest concurrency test: 10 simultaneous reservations against a user sitting at 19 must yield exactly one success and nine refusals
+- Vitest concurrency test: 10 simultaneous reservations against a user sitting at 19 must yield exactly one success and nine refusals. **This could not be honoured** — requests to the hosted project serialise, so no window exists for a second statement to land inside. Measured, not assumed: a deliberately racy read-then-write implementation with a one-second sleep between the read and the write kept the test green. See F16 in `build-journal.md`; proving atomicity needs a local stack or F36
+
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **F16 is the per-user axis only.** Reserve, release, and a `record_shared_tokens` that writes `shared_key_usage` and nothing else. `shared_key_budget`, `estimated_usd`, the breaker and `createServiceRoleClient()` all wait for F17 — so the only RLS-bypassing client in the codebase still does not exist
+- **The meter is always visible while the shared key would answer**, shifting to `text-warn` at the threshold and `text-danger` at zero. `DESIGN.md` describes the text as *shifting*, which presupposes it was already on screen; this plan's "appearing at `QUOTA_WARNING_THRESHOLD`" would leave that shift nothing to shift from
+- **Exhausted locks the composer only on a shared-key model.** This bullet list predates F15's picker. Disabling outright would refuse sends `resolveModel()` accepts happily, locking a user out of a key they pay for over an allowance their request never touches
+- **`willUseSharedKey()` joins the availability family in `src/lib/models.ts`** — the meter's visibility, the exhausted lock, and the server's reservation are three readings of one rule
+- **A reservation is released when persistence fails**, not left to the sweep. The sweep exists for a process that died, not for a failure the handler can see
 
 ### 17 Global circuit breaker
 
