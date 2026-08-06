@@ -228,6 +228,32 @@ export const TITLE_TIMEOUT_MS = 15 * 1000
 export const TITLE_SOURCE_CHAR_LIMIT = 500
 
 /**
+ * How many user prompts a conversation needs before the outline rail appears.
+ *
+ * An exchange is one prompt, so the rail arrives when the third is *sent* rather
+ * than when its answer completes — waiting for the answer would make sending a
+ * message do nothing visible for a while, which reads as lag rather than as a
+ * rule. Below this the whole right column is unmounted, gutter and mobile
+ * trigger included: a restore button that restores nothing is worse than no
+ * button.
+ */
+export const OUTLINE_MIN_EXCHANGES = 3
+
+/**
+ * How much of a prompt an outline entry carries.
+ *
+ * `line-clamp-2` decides what is *seen*; this decides what is *rendered*. A user
+ * message can be a 10,000-character paste, and below 1024px the rail exists
+ * twice — the desktop aside is `display:none` but still in the document while
+ * the sheet copy is mounted. Clamping only in CSS would put that paste into the
+ * DOM twice to show two lines of it.
+ */
+export const OUTLINE_ENTRY_CHAR_LIMIT = 140
+
+/** How long a jumped-to message stays highlighted before settling back. */
+export const OUTLINE_HIGHLIGHT_MS = 1200
+
+/**
  * Where the shell's collapse preferences live.
  *
  * A cookie rather than localStorage, and the difference is visible. The (app)
