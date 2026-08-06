@@ -12,11 +12,19 @@ import {
   RAIL_COOKIE,
   SIDEBAR_COOKIE,
 } from '@/lib/constants'
+import { isOutlineVisible } from '@/lib/outline'
 import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { CollapseToggle } from '@/components/shell/CollapseToggle'
+import {
+  EMPTY_OUTLINE,
+  OutlineContext,
+  OutlinePublisherContext,
+  type OutlinePublisher,
+  type OutlineState,
+} from '@/components/shell/use-outline'
 import { ShellContext, type ShellState } from '@/components/shell/use-shell'
 
 type AppShellProps = {
@@ -41,6 +49,12 @@ type AppShellProps = {
  * first paint is already correct. Toggling updates local state immediately and
  * writes the cookie for next time; there is no router.refresh(), because
  * nothing on the server needs to re-run to reflect a layout preference.
+ *
+ * It also holds the outline, for a structural reason rather than a tidy one:
+ * the rail is slotted in here while the messages live in `children`, so this is
+ * the nearest component standing above both. `Chat` publishes, the rail reads,
+ * and the same `useChat` array serves the thread and the outline — which is what
+ * makes the rail cost no extra query.
  */
 export function AppShell({
   sidebar,
@@ -57,6 +71,15 @@ export function AppShell({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(false)
 
+  // Published by whichever route currently owns a thread, and by nothing else.
+  const [outline, setOutline] = useState<OutlineState>(EMPTY_OUTLINE)
+
+  // The whole right column, not just its contents. A rail with two entries is
+  // noise, and a 36px gutter whose restore button restores nothing is worse than
+  // no gutter — so the aside, the strip, and the mobile trigger appear together
+  // or not at all. On /settings nothing publishes, so this is false there too.
+  const railVisible = isOutlineVisible(outline.entries.length)
+
   const pathname = usePathname()
   const [lastPathname, setLastPathname] = useState(pathname)
 
@@ -68,6 +91,14 @@ export function AppShell({
   if (pathname !== lastPathname) {
     setLastPathname(pathname)
     setSidebarOpen(false)
+    setRailOpen(false)
+  }
+
+  // The same adjustment for the other way the sheet can be orphaned. Feature 19
+  // truncates a thread on an edit, which can drop it back below the threshold
+  // while its sheet is open — leaving an overlay sitting over a rail that no
+  // longer exists, with its trigger gone from the header.
+  if (railOpen && !railVisible) {
     setRailOpen(false)
   }
 
@@ -90,97 +121,121 @@ export function AppShell({
     [sidebarCollapsed, railCollapsed, toggleSidebar, toggleRail],
   )
 
+  // Stable for the life of the shell, so publishing never changes the identity
+  // of the thing a publisher depends on. `Chat` lists this in an effect's
+  // dependencies; were it rebuilt per render, that effect would run every render
+  // and publish on every streamed token.
+  const publisher = useMemo<OutlinePublisher>(() => ({ publish: setOutline }), [])
+
   return (
     <ShellContext.Provider value={shell}>
-      <div className="flex h-dvh overflow-hidden bg-canvas">
-        <aside
-          aria-label="Conversation sidebar"
-          className={cn(
-            'hidden w-65 shrink-0 border-r border-hairline',
-            !sidebarCollapsed && 'desktop:block',
-          )}
-        >
-          {sidebar}
-        </aside>
-
-        {/* What a collapsed column leaves behind. A fully hidden one has no way
-            back, and a floating restore button would sit on top of the thread
-            once feature 09 fills it. */}
-        <div
-          className={cn(
-            'hidden w-9 shrink-0 flex-col items-center border-r border-hairline pt-sm',
-            sidebarCollapsed && 'desktop:flex',
-          )}
-        >
-          <CollapseToggle column="sidebar" />
-        </div>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* The only chrome the desktop shell does not have. DESIGN.md opens the
-              outline "from the thread header", which does not exist until the
-              thread does — feature 09 grows this into that header rather than
-              inventing a second one. */}
-          <header className="flex items-center justify-between gap-sm border-b border-hairline px-sm py-xs desktop:hidden">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Open the conversation sidebar"
-              onClick={() => setSidebarOpen(true)}
+      <OutlinePublisherContext.Provider value={publisher}>
+        <OutlineContext.Provider value={outline}>
+          <div className="flex h-dvh overflow-hidden bg-canvas">
+            <aside
+              aria-label="Conversation sidebar"
+              className={cn(
+                'hidden w-65 shrink-0 border-r border-hairline',
+                !sidebarCollapsed && 'desktop:block',
+              )}
             >
-              <MenuIcon />
-            </Button>
+              {sidebar}
+            </aside>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Open the outline"
-              onClick={() => setRailOpen(true)}
+            {/* What a collapsed column leaves behind. A fully hidden one has no
+                way back, and a floating restore button would sit on top of the
+                thread once feature 09 fills it. */}
+            <div
+              className={cn(
+                'hidden w-9 shrink-0 flex-col items-center border-r border-hairline pt-sm',
+                sidebarCollapsed && 'desktop:flex',
+              )}
             >
-              <ListIcon />
-            </Button>
-          </header>
+              <CollapseToggle column="sidebar" />
+            </div>
 
-          {/* overflow-hidden, not auto: each page owns its own scrolling, which
-              is what lets the composer stay pinned to the bottom of the thread
-              column while the messages above it scroll. */}
-          <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
-        </div>
+            <div className="flex min-w-0 flex-1 flex-col">
+              {/* The only chrome the desktop shell does not have. DESIGN.md opens
+                  the outline "from the thread header", which does not exist until
+                  the thread does — feature 09 grows this into that header rather
+                  than inventing a second one. */}
+              <header className="flex items-center justify-between gap-sm border-b border-hairline px-sm py-xs desktop:hidden">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open the conversation sidebar"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <MenuIcon />
+                </Button>
 
-        <div
-          className={cn(
-            'hidden w-9 shrink-0 flex-col items-center border-l border-hairline pt-sm',
-            railCollapsed && 'desktop:flex',
-          )}
-        >
-          <CollapseToggle column="rail" />
-        </div>
+                {/* Gone with the rest of the column below the threshold. A
+                    trigger for a sheet with nothing in it is the mobile
+                    equivalent of the empty gutter. justify-between leaves the
+                    sidebar button where it was. */}
+                {railVisible && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Open the outline"
+                    onClick={() => setRailOpen(true)}
+                  >
+                    <ListIcon />
+                  </Button>
+                )}
+              </header>
 
-        <aside
-          aria-label="Conversation outline"
-          className={cn(
-            'hidden w-55 shrink-0 border-l border-hairline',
-            !railCollapsed && 'desktop:block',
-          )}
-        >
-          {rail}
-        </aside>
+              {/* overflow-hidden, not auto: each page owns its own scrolling,
+                  which is what lets the composer stay pinned to the bottom of the
+                  thread column while the messages above it scroll. */}
+              <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
+            </div>
 
-        {/* Radix mounts sheet content only while open, so the sidebar node above
-            and the one below are never in the document at the same time. */}
-        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-65">
-            <SheetTitle className="sr-only">Conversation sidebar</SheetTitle>
-            {sidebar}
-          </SheetContent>
-        </Sheet>
+            {railVisible && (
+              <div
+                className={cn(
+                  'hidden w-9 shrink-0 flex-col items-center border-l border-hairline pt-sm',
+                  railCollapsed && 'desktop:flex',
+                )}
+              >
+                <CollapseToggle column="rail" />
+              </div>
+            )}
 
-        <Sheet open={railOpen} onOpenChange={setRailOpen}>
-          <SheetContent side="right" className="w-55">
-            <SheetTitle className="sr-only">Conversation outline</SheetTitle>
-            {rail}
-          </SheetContent>
-        </Sheet>
-      </div>
+            {railVisible && (
+              <aside
+                aria-label="Conversation outline"
+                className={cn(
+                  'hidden w-55 shrink-0 border-l border-hairline',
+                  !railCollapsed && 'desktop:block',
+                )}
+              >
+                {rail}
+              </aside>
+            )}
+
+            {/* Radix mounts sheet content only while open. Note that this does
+                NOT mean one copy at a time: while a sheet is open its column's
+                desktop aside is also still in the document, hidden by
+                `display:none` rather than unmounted. That is why nothing inside
+                either column may carry a hand-written `id` — it would exist
+                twice. Messages are exempt, being rendered once in `children`. */}
+            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+              <SheetContent side="left" className="w-65">
+                <SheetTitle className="sr-only">Conversation sidebar</SheetTitle>
+                {sidebar}
+              </SheetContent>
+            </Sheet>
+
+            <Sheet open={railOpen} onOpenChange={setRailOpen}>
+              <SheetContent side="right" className="w-55">
+                <SheetTitle className="sr-only">Conversation outline</SheetTitle>
+                {rail}
+              </SheetContent>
+            </Sheet>
+          </div>
+        </OutlineContext.Provider>
+      </OutlinePublisherContext.Provider>
     </ShellContext.Provider>
   )
 }
