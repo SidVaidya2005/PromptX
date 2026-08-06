@@ -408,6 +408,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Scroll position tracked with `IntersectionObserver`, throttled
 - Each message anchored by a stable `id` for deep linking
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **The rail is a sibling of the thread, so it needed a channel rather than a prop.** `OutlineRail` is slotted into `AppShell` by the `(app)` layout while the messages live in `Chat`, a Client Component inside `children` — neither is an ancestor of the other. `AppShell` is the nearest component above both and was already a Client Component, so it holds the outline: `Chat` publishes, the rail reads. That is what makes "no extra query" literally true — the entries are the same `useChat` array the thread renders, not a second read of the same rows. A parallel route slot (`@rail`) was rejected for needing its own `listByConversation` and only refreshing on `router.refresh()`
+- **`OutlineRail` became a Client Component, narrowing an F05 constraint rather than breaking it.** The shell hands both columns to `AppShell` as rendered Server Component nodes so their markup stays in the RSC payload; that reasoning does not reach a column whose content is derived from browser-only state and has no server markup to preserve. The sidebar's arrangement is untouched
+- **Message anchors carry hand-written ids; rail items carry `aria-current`.** This looks like it violates F06's "no hand-written `id` in a shell column" and does not — that rule exists because below 1024px a column is in the document twice, once as the `display:none` desktop aside and once as the mounted sheet. `children` renders once. Measured with the sheet open at 800px: two rail lists in the DOM, zero duplicate ids document-wide
+- **Position, not crossings, decides the active entry.** The first draft kept "the last anchor to cross the reading line", which is right scrolling down and wrong scrolling up — scrolling back past a prompt leaves it as the most recent crossing while the reader is above it. Recording where each anchor *is* is direction-independent. Measured both ways: the marker holds on one prompt through a long answer (scrollTop 400→2000) and walks back 3→2→1→0 on the way up
+- **The entries memo is load-bearing and keyed on content, not ids.** Measured across comparable streams: 1 publish with it, 14 without. Keyed on `id:label` rather than ids alone because feature 19 edits a prompt in place — same id, new text — and an id-only key would leave the rail showing the old wording
+- **An exchange is one prompt, and "hidden" unmounts the whole column** — aside, 36px gutter, and the mobile trigger together. A gutter whose restore button restores nothing is worse than no gutter, and it removes the placeholder sentence the rail used to show on `/settings`
+
 ### 19 Edit and resend
 
 **UI:**

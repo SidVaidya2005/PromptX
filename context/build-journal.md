@@ -38,6 +38,86 @@ At that phase's checkpoint, the whole phase collapses to:
 
 -->
 
+## Phase 3 — Conversation craft
+
+### 18 Message outline rail — 2026-08-06
+
+The right column finally lists something. Every user prompt in the open
+conversation, truncated to two lines, each a jump target, with the entry for the
+exchange being read kept marked. Below three prompts the whole column is gone.
+
+**The problem was where the rail sits, not what it renders.** `build-plan.md`
+§18 asks for entries "derived from the already-loaded thread — no extra query",
+and the rail is slotted into `AppShell` by the `(app)` layout while the messages
+live in `Chat`, a Client Component inside `children`. They are siblings; no prop
+reaches between them. `AppShell` was already a Client Component wrapping both
+slots, so it now holds the outline: `Chat` publishes `{entries, activeId,
+jumpTo}`, the rail reads it. The entries are the same `useChat` array the thread
+renders, which is what makes "no extra query" literal rather than approximate. A
+parallel route slot (`@rail`) was considered and rejected — it keeps the rail a
+Server Component but needs its own `listByConversation` and only refreshes on
+`router.refresh()`, so a just-sent prompt would be missing until the answer
+finished. The publisher is a **second context**, separate from the value, so
+`Chat` cannot subscribe to what it writes.
+
+**A rule that was right in one direction.** The active entry started as "the
+last anchor to cross the reading line". That is correct scrolling down and wrong
+scrolling up: scrolling back past a prompt leaves it as the most recent crossing
+while the reader is now above it, so the marker sticks to an exchange that has
+been left. Rewritten to record where each anchor *is* — `IntersectionObserver`
+gives `isIntersecting` and `boundingClientRect` together, and position is
+direction-independent. Found only because the browser pass walked the thread
+both ways instead of confirming the direction the code was designed around.
+
+**Two constraint questions that looked like violations and were not.** F05 says
+the rail reaches `AppShell` as a rendered Server Component node so its markup
+stays in the RSC payload; `OutlineRail` had to become a Client Component, and
+the constraint was **narrowed in place** rather than broken — a column whose
+content comes from browser-only state has no server markup to preserve. F06 says
+nothing in a shell column may carry a hand-written `id`, because below 1024px a
+column is in the document twice; F18 needed anchors on messages. The thread
+renders once in `AppShell`, so the two rules do not collide — confirmed with the
+sheet open at 800px: two rail lists in the DOM, **zero duplicate ids
+document-wide**. Rail items use `aria-current`.
+
+**Gotchas.** A `activeIdRef.current = activeId` write during render was rejected
+outright by `react-hooks/refs`; the functional `setActiveId` form removes the
+need for the ref entirely and gets React's own bail-out with it. Instrumenting
+renders with a bare `window` read crashed SSR — `Chat` is a Client Component and
+is still server-rendered on the first pass. Two measurement attempts produced
+numbers that meant nothing before one produced a number that did: the session
+cookie expired mid-run and the "0 publishes" that followed was a signed-out
+page, and a later reset landed *after* a 3.7s stream had already finished
+because the CLI round-trip is slower than the response. Comparing renders
+against publishes across a whole stream is timing-independent and is what
+finally answered the question.
+
+**Verified:** 211 tests (12 new in `tests/lib/outline.test.ts`), typecheck,
+lint, and a production build green. Browser pass at 1440px and 800px against a
+real streamed thread, signed in by minting a session the way F03's suite does —
+admin-create a confirmed user, sign in for a real JWT, and let `@supabase/ssr`
+encode its own cookie — because sign-in is Google OAuth and there was no
+signed-in profile. Rail absent at 0/1/2 prompts and present at 3, with the
+gutter and mobile trigger appearing with it. Clamp measured at 40px rendered
+against 60px of content. Jump scrolled 2000→8 and the highlight ran 200–1000ms,
+gone by 1200ms, exactly `OUTLINE_HIGHLIGHT_MS`. Active marker held one prompt
+from scrollTop 400 to 2000 through a long answer and walked 3→2→1→0 back up.
+Escape left **zero** stranded panels. Tab reached a rail entry with the 1px
+focus ring. Both throwaway users deleted afterwards; the phase's manual sends
+cost $0.0383 on the shared ledger, breaker untripped.
+
+**Mutations.** Three, all landing where intended. Widening
+`isOutlineVisible` to `>` turned exactly the boundary test red and left "stays
+true above the threshold" green. Deleting the user-role filter turned two tests
+red. Removing the publish effect's cleanup reproduced the stale rail on
+`/settings/keys` with all four entries and the outline trigger still present.
+Removing the entries memo took one streamed response from **1 publish to 14**.
+
+**Note on the Key Decisions eviction.** The F12 bullet displaced from
+`progress-tracker.md` was already fully absorbed into `constraints.md`'s
+Testing section ("A test suite that has never failed proves nothing", hardened
+F12–F17), so the move needed no new bullet — the destination already held it.
+
 ## Phase 2 — Bring your own key *(compacted)*
 
 Six features, 2026-08-01 to 2026-08-05. The phase turned a single hardcoded
