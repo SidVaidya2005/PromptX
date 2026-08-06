@@ -10,6 +10,7 @@ type ThreadProps = {
   modelId: string
   /** The message a rail jump just landed on, flashed briefly. Null otherwise. */
   highlightedId: string | null
+  onEdit: (id: string, text: string) => void
 }
 
 /**
@@ -23,6 +24,7 @@ export function Thread({
   isStreaming,
   modelId,
   highlightedId,
+  onEdit,
 }: ThreadProps) {
   return (
     <div className="mx-auto flex w-full max-w-180 flex-col gap-lg px-lg py-xl">
@@ -37,6 +39,14 @@ export function Thread({
           }
           fallbackModelId={modelId}
           isHighlighted={message.id === highlightedId}
+          // No editing while an answer is arriving. The request in flight is
+          // building on this thread, and rewriting its history underneath it
+          // would leave the response answering a question that no longer exists.
+          canEdit={!isStreaming}
+          // What an edit here would delete. Zero means the confirmation is
+          // skipped, because there is nothing to warn about.
+          followingCount={messages.length - 1 - index}
+          onEdit={onEdit}
         />
       ))}
     </div>

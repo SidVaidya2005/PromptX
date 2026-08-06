@@ -109,12 +109,19 @@ export function Chat({
         // Only the newest turn goes over the wire. The server loads history
         // from the database — a stated invariant, not an optimisation, because
         // a client must not be able to rewrite its own past turns.
-        prepareSendMessagesRequest: ({ messages }) => ({
+        prepareSendMessagesRequest: ({ messages, body }) => ({
           body: {
             conversationId,
             message: messages[messages.length - 1],
             provider: model.provider,
             modelId: model.modelId,
+            // Per-call overrides — feature 19's `editMessageId` — arrive here as
+            // `body` and are dropped on the floor unless they are spread in.
+            // Losing it does not fail: the request is simply an ordinary send,
+            // so the server appends instead of editing while the client has
+            // already truncated its own view. The two only disagree after a
+            // reload, which is what caught it.
+            ...body,
           },
         }),
       }),
@@ -124,7 +131,7 @@ export function Chat({
     [conversationId, model.provider, model.modelId],
   )
 
-  const { messages, sendMessage, status, stop, error } = useChat<ChatMessage>({
+  const { messages, sendMessage, setMessages, status, stop, error } = useChat<ChatMessage>({
     // Gives each conversation its own isolated state when switching between them.
     id: conversationId ?? 'new',
     messages: initialMessages,
@@ -159,6 +166,63 @@ export function Chat({
   })
 
   const isStreaming = status === 'submitted' || status === 'streaming'
+
+  /**
+   * The thread as it was before an edit truncated it, held until the request is
+   * known to have been accepted.
+   *
+   * A ref rather than state because nothing renders from it — it exists only so
+   * the effect below can put the messages back.
+   */
+  const beforeEdit = useRef<ChatMessage[] | null>(null)
+
+  /**
+   * Rewrites a prompt and regenerates from it, dropping everything after it.
+   *
+   * The thread is truncated optimistically and the server is told which message
+   * to edit through a per-call body override, so the id never has to live in
+   * React state where every other send path would have to remember to clear it.
+   */
+  function editMessage(messageId: string, nextText: string) {
+    const index = messages.findIndex((candidate) => candidate.id === messageId)
+    if (index < 0) return
+
+    beforeEdit.current = messages
+    setMessages(messages.slice(0, index))
+
+    void sendMessage({ text: nextText }, { body: { editMessageId: messageId } })
+  }
+
+  /**
+   * Puts the thread back when an edit is refused.
+   *
+   * This is what makes the optimistic truncation safe, and it keys off `status`
+   * rather than a rejected promise because `sendMessage` does not reject —
+   * measured against the installed SDK, whose `makeRequest` catches, calls
+   * `onError`, and sets `status: 'error'`. A `.catch()` here would look right,
+   * compile, and never once run.
+   *
+   * The server truncates strictly *after* the model resolves and the quota slot
+   * is claimed, so a spent allowance or a tripped breaker deletes nothing. Only
+   * the screen lost those messages, and only the screen has to restore them.
+   *
+   * The snapshot is dropped the moment tokens start arriving: past that point
+   * the server really has truncated, and a later stream failure must leave the
+   * thread truncated rather than resurrecting messages the database no longer
+   * holds.
+   */
+  useEffect(() => {
+    if (status === 'streaming') {
+      beforeEdit.current = null
+      return
+    }
+
+    if (status !== 'error' || !beforeEdit.current) return
+
+    const restore = beforeEdit.current
+    beforeEdit.current = null
+    setMessages(restore)
+  }, [status, setMessages])
 
   /**
    * The outline rail's entries, and the reason they cost nothing.
@@ -249,6 +313,7 @@ export function Chat({
             isStreaming={isStreaming}
             modelId={model.modelId}
             highlightedId={highlightedId}
+            onEdit={editMessage}
           />
         )}
       </div>

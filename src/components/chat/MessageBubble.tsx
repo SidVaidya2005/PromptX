@@ -1,10 +1,10 @@
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/messages'
-import { outlineAnchorId } from '@/lib/outline'
 
 import { CopyButton } from '@/components/chat/CopyButton'
 import { MarkdownErrorBoundary } from '@/components/chat/MarkdownErrorBoundary'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
+import { UserMessage } from '@/components/chat/UserMessage'
 
 type MessageBubbleProps = {
   message: ChatMessage
@@ -14,6 +14,11 @@ type MessageBubbleProps = {
   fallbackModelId: string
   /** True for the brief flash after the outline rail jumps to this message. */
   isHighlighted: boolean
+  /** False while a response is in flight — one generation at a time. */
+  canEdit: boolean
+  /** Messages after this one, which an edit would delete. */
+  followingCount: number
+  onEdit: (id: string, text: string) => void
 }
 
 /**
@@ -33,6 +38,9 @@ export function MessageBubble({
   isStreaming,
   fallbackModelId,
   isHighlighted,
+  canEdit,
+  followingCount,
+  onEdit,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const failed = message.metadata?.status === 'error'
@@ -42,30 +50,22 @@ export function MessageBubble({
     .map((part) => part.text)
     .join('')
 
+  // The outline rail's scroll target lives inside UserMessage, along with the
+  // editor that replaces the bubble. A hand-written id, which the shell columns
+  // are forbidden — but that rule exists because below 1024px a column is in the
+  // document twice, once as the display:none desktop aside and once as the
+  // mounted sheet. The thread is not: `children` renders exactly once in
+  // AppShell, so these ids are unique.
   if (isUser) {
     return (
-      // The outline rail's scroll target. A hand-written id, which the shell
-      // columns are forbidden — but that rule exists because below 1024px a
-      // column is in the document twice, once as the display:none desktop aside
-      // and once as the mounted sheet. The thread is not: `children` renders
-      // exactly once in AppShell, so these ids are unique. scroll-mt keeps a
-      // jumped-to message off the top edge instead of flush against it.
-      <div id={outlineAnchorId(message.id)} className="flex scroll-mt-lg justify-end">
-        <div
-          className={cn(
-            'max-w-4/5 rounded-md border border-hairline bg-canvas-soft px-lg py-md',
-            'text-body-md whitespace-pre-wrap text-ink transition-colors',
-            // The jump's acknowledgement. Brightening the existing hairline
-            // rather than adding a ring keeps it inside the elevation system —
-            // DESIGN.md builds emphasis from surface contrast, not from a new
-            // outline, and a coloured one would need a chromatic accent that
-            // does not exist here.
-            isHighlighted && 'border-primary',
-          )}
-        >
-          {text}
-        </div>
-      </div>
+      <UserMessage
+        id={message.id}
+        text={text}
+        isHighlighted={isHighlighted}
+        canEdit={canEdit}
+        followingCount={followingCount}
+        onEdit={onEdit}
+      />
     )
   }
 
