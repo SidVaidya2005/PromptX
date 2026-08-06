@@ -8,6 +8,8 @@ type ThreadProps = {
   isStreaming: boolean
   /** The composer's model, for a live message with no metadata of its own. */
   modelId: string
+  /** The message a rail jump just landed on, flashed briefly. Null otherwise. */
+  highlightedId: string | null
 }
 
 /**
@@ -16,7 +18,12 @@ type ThreadProps = {
  * The 720px measure is DESIGN.md's thread measure, centred inside the fluid
  * middle column so long responses stay readable on a wide display.
  */
-export function Thread({ messages, isStreaming, modelId }: ThreadProps) {
+export function Thread({
+  messages,
+  isStreaming,
+  modelId,
+  highlightedId,
+}: ThreadProps) {
   return (
     <div className="mx-auto flex w-full max-w-180 flex-col gap-lg px-lg py-xl">
       {messages.map((message, index) => (
@@ -29,6 +36,7 @@ export function Thread({ messages, isStreaming, modelId }: ThreadProps) {
             isStreaming && index === messages.length - 1 && message.role === 'assistant'
           }
           fallbackModelId={modelId}
+          isHighlighted={message.id === highlightedId}
         />
       ))}
     </div>

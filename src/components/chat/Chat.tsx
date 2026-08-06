@@ -1,16 +1,20 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 
+import { OUTLINE_HIGHLIGHT_MS } from '@/lib/constants'
 import type { ChatMessage } from '@/lib/messages'
+import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 
 import { Composer } from '@/components/chat/Composer'
 import { Thread } from '@/components/chat/Thread'
 import { useModelMutation } from '@/components/chat/use-model-mutation'
+import { useOutlineTracking } from '@/components/chat/use-outline-tracking'
+import { useOutlinePublisher } from '@/components/shell/use-outline'
 
 import type { Provider } from '@/types/domain'
 
@@ -156,9 +160,87 @@ export function Chat({
 
   const isStreaming = status === 'submitted' || status === 'streaming'
 
+  /**
+   * The outline rail's entries, and the reason they cost nothing.
+   *
+   * This is the same array the thread is rendering — no second query and no
+   * second read of the same rows, which is what "derived from the already-loaded
+   * thread" means. What it needs is a stable *identity*: `messages` gets a new
+   * one on every streamed token, and an unmemoised list would publish upwards
+   * dozens of times per response and rebuild the rail's observer with it.
+   *
+   * The key is built from the derived entries rather than from `messages`, so it
+   * covers both ways the outline can change and no way it cannot. Ids alone
+   * would be cheaper and would be wrong at feature 19: editing a prompt keeps
+   * its id and changes its text, and the rail would keep showing the old wording
+   * with nothing to explain why. An assistant message growing changes neither.
+   *
+   * This memo is load-bearing rather than an optimisation.
+   */
+  const derivedEntries = toOutlineEntries(messages)
+  const outlineKey = derivedEntries.map((entry) => `${entry.id}:${entry.label}`).join('\n')
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on outlineKey, see above
+  const entries = useMemo(() => derivedEntries, [outlineKey])
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const activeId = useOutlineTracking(scrollRef, entries)
+
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Scrolls the thread to a message and flashes it.
+   *
+   * Lives here rather than in the rail because this component owns the scroll
+   * container. The rail knows which message it wants and nothing about how to
+   * reach it.
+   *
+   * `scrollIntoView`'s own `behavior` overrides the CSS `scroll-behavior` that
+   * globals.css neutralises under prefers-reduced-motion, so the media query has
+   * to be asked directly — the stylesheet cannot reach this call.
+   */
+  const jumpTo = useCallback((messageId: string) => {
+    const anchor = document.getElementById(outlineAnchorId(messageId))
+    if (!anchor) return
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    anchor.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+
+    if (highlightTimer.current) clearTimeout(highlightTimer.current)
+    setHighlightedId(messageId)
+
+    highlightTimer.current = setTimeout(() => {
+      highlightTimer.current = null
+      setHighlightedId(null)
+    }, OUTLINE_HIGHLIGHT_MS)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (highlightTimer.current) clearTimeout(highlightTimer.current)
+    },
+    [],
+  )
+
+  const publisher = useOutlinePublisher()
+
+  useEffect(() => {
+    if (!publisher) return
+
+    publisher.publish({ entries, activeId, jumpTo })
+
+    // Clearing on unmount is what keeps the rail honest across a navigation.
+    // Without it, leaving for /settings would carry this conversation's outline
+    // onto a page that has no thread at all — and the shell decides whether the
+    // whole right column exists from the entry count, so a stale one would keep
+    // a column alive on every route the user visits next.
+    return () => publisher.publish({ entries: [], activeId: null, jumpTo: () => {} })
+  }, [publisher, entries, activeId, jumpTo])
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : (
@@ -166,6 +248,7 @@ export function Chat({
             messages={messages}
             isStreaming={isStreaming}
             modelId={model.modelId}
+            highlightedId={highlightedId}
           />
         )}
       </div>
