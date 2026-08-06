@@ -320,6 +320,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      edit_message_and_truncate: {
+        Args: { p_content: string; p_message_id: string }
+        Returns: number
+      }
       is_shared_key_available: { Args: never; Returns: boolean }
       reap_attachments_tick: { Args: never; Returns: undefined }
       reconcile_shared_key_usage: { Args: never; Returns: undefined }
