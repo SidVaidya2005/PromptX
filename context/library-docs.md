@@ -388,7 +388,7 @@ $$;
 - In a Server Component the cookie store is read-only, so `setAll` throws. Swallow that specific error — the pattern in `architecture.md` does this deliberately, with a comment.
 - Regenerate `src/types/database.ts` after every migration — via the **Supabase MCP** `generate_typescript_types`, since this project has no local CLI stack (F02). Never hand-edit it.
 - Every migration that creates a table also enables RLS and defines its policies. A table shipped without policies is invisible to the anon key and a security hole under the service key.
-- `security definer` functions are forbidden unless a written reason exists in `build-journal.md` — they run as the owner and silently bypass RLS.
+- `security definer` functions are forbidden unless a written reason exists in `constraints.md` → Database access — they run as the owner and silently bypass RLS.
 - Storage paths always start with the owner's user id, because the storage policy matches on the first path segment.
 
 ### Scheduled jobs (`pg_cron`)

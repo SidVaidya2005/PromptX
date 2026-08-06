@@ -35,6 +35,7 @@ Playwright · deployed on **Render** as a single Node web service.
 | [`context/library-docs.md`](./context/library-docs.md) | Project-specific usage patterns per library |
 | [`context/build-plan.md`](./context/build-plan.md) | 8 phases, 38 features, in order |
 | [`context/progress-tracker.md`](./context/progress-tracker.md) | Live build status |
+| [`context/constraints.md`](./context/constraints.md) | What still binds, grouped by topic — read before any decision |
 | [`context/build-journal.md`](./context/build-journal.md) | Dated archive of decisions, gotchas, and verification results per feature |
 | [`context/DESIGN.md`](./context/DESIGN.md) | The design system — every colour, type scale, radius, spacing value |
 

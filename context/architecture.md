@@ -142,7 +142,8 @@ PromptX/
 │   ├── library-docs.md
 │   ├── build-plan.md
 │   ├── progress-tracker.md
-│   └── build-journal.md
+│   ├── constraints.md              → what still binds, by topic. Read on demand
+│   └── build-journal.md            → dated history. NOT read at session start
 ├── src/
 │   ├── app/                        → routes ONLY. No business logic.
 │   │   ├── layout.tsx              → html/body, font loading, global providers

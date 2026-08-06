@@ -2,7 +2,7 @@
 
 > **Role:** Live build status — what's done, in progress, and next.
 > **Read at the start of every session**; **update after every completed feature.**
-> **Relates to:** mirrors `build-plan.md` exactly.
+> **Relates to:** mirrors `build-plan.md` exactly; evicts old decisions to `constraints.md`.
 
 Any AI agent reading this should immediately know what is done, what is in
 progress, and what is next.
@@ -11,7 +11,7 @@ progress, and what is next.
 
 - **Current Status is overwritten, never appended.** It holds three lines describing only the latest state. Do not keep previous statuses here — the record of what happened lives in `build-journal.md`.
 - **Progress checkboxes are edited in place** — tick the box for the completed feature. Never restate, duplicate, or re-list the checklist.
-- **Key Decisions holds the 10 most recent decisions, newest first.** When adding an 11th, file the oldest bullet under its topic in `build-journal.md` → **Standing Constraints**, so this section never exceeds 10. Eviction is a move, never a delete — an old decision can still bind.
+- **Key Decisions holds the 10 most recent decisions, newest first.** When adding an 11th, file the oldest bullet under its topic in `constraints.md`, so this section never exceeds 10. Eviction is a move, never a delete — an old decision can still bind.
 
 ---
 

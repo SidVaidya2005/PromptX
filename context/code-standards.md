@@ -530,7 +530,7 @@ Approved dependencies for this project:
 
 Do not install any other packages without updating this list first.
 
-Explicitly rejected, with reasons — do not reintroduce these without a decision recorded in `build-journal.md`:
+Explicitly rejected, with reasons — do not reintroduce these without a decision recorded in `constraints.md`:
 
 - **A state management library** (Redux, Zustand, Jotai) — Server Components hold the data; client state is local and small.
 - **An ORM** (Prisma, Drizzle) — `supabase-js` plus generated types covers it, and an ORM's own connection would bypass RLS.

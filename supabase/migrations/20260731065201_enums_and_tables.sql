@@ -210,7 +210,7 @@ values (1, date_trunc('month', now() at time zone 'utc')::date);
 -- SECURITY DEFINER is required here and is the one sanctioned use in this
 -- codebase: the function is fired by an insert on auth.users, executes as the
 -- auth admin role, and must write into public.profiles. The reason is recorded
--- in build-journal.md → Standing Constraints, as library-docs.md requires.
+-- in constraints.md → Database access, as library-docs.md requires.
 --
 -- search_path is emptied and every name fully qualified, so a schema planted on
 -- the caller's search_path cannot hijack the elevated execution.
