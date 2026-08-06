@@ -32,11 +32,22 @@ export const providerSchema = z.enum(['openai', 'anthropic', 'google', 'openrout
  * feature 16 refuses a request on quota, there is no half-made conversation
  * left behind.
  *
+ * `editMessageId` is feature 19, and it lives on this schema rather than on a
+ * route of its own for a reason that is really about ordering. An edit deletes
+ * every message after the one it rewrites, and this handler is the only place
+ * that knows whether a request is going to reach a provider at all. A separate
+ * `PATCH /api/messages/[id]` would put that delete on the far side of the
+ * refusal path — truncate succeeds, the send is then refused on quota, and the
+ * thread is destroyed with no answer and nothing to restore it from. Same
+ * argument that put conversation creation here at F07, with more at stake.
+ *
  * Every string is capped. An unbounded `z.string()` on a chat message is a
  * denial-of-service vector.
  */
 export const chatRequestSchema = z.object({
   conversationId: z.uuid().nullable(),
+  /** Non-null turns this into an edit-and-resend of an existing user message. */
+  editMessageId: z.uuid().nullish(),
   message: z.object({
     id: z.string().min(1).max(64),
     role: z.literal('user'),

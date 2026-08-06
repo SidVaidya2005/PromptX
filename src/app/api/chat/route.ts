@@ -24,7 +24,9 @@ import {
 import {
   appendMessage,
   completeMessage,
+  editMessageAndTruncate,
   failMessage,
+  getMessage,
   listByConversation,
 } from '@/server/data/messages'
 import { MissingKeyError, resolveModel, UnknownModelError } from '@/server/providers'
@@ -59,6 +61,13 @@ export const runtime = 'nodejs'
  * dangling prompt and no empty conversation. That is also why conversation
  * creation lives in this handler rather than its own endpoint.
  *
+ * Feature 19 raised the stakes on that ordering rather than complicating it.
+ * `editMessageId` turns this into an edit-and-resend, which DELETES every
+ * message after the one it rewrites — so the same line that used to prevent a
+ * dangling prompt now prevents a destroyed conversation. A refused edit leaves
+ * the thread byte-for-byte as it was, which is only true because the truncation
+ * sits below the line with every other write and not above it.
+ *
  * **The assistant row is created up front in `streaming` status**, and its id is
  * held for the life of the stream. Without it there is no stable row to update
  * on failure: at that moment the newest message is the *user's*, so any
@@ -79,10 +88,19 @@ export async function POST(request: Request) {
     )
   }
 
-  const { conversationId, message, provider, modelId } = parsed.data
+  const { conversationId, editMessageId, message, provider, modelId } = parsed.data
 
   const text = textOf(message)
   if (!text.trim()) {
+    return NextResponse.json(
+      { error: 'Invalid request', code: 'invalid_input' },
+      { status: 400 },
+    )
+  }
+
+  // There is nothing to edit in a conversation that does not exist yet, so this
+  // pairing is incoherent rather than merely unauthorised.
+  if (editMessageId && !conversationId) {
     return NextResponse.json(
       { error: 'Invalid request', code: 'invalid_input' },
       { status: 400 },
@@ -95,6 +113,18 @@ export async function POST(request: Request) {
   if (conversationId) {
     const conversation = await getConversation(conversationId)
     if (!conversation) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+  }
+
+  // Checked here, above the provider line, because it is a READ. The edit
+  // itself must wait — it deletes messages — but proving the target exists and
+  // is editable costs nothing and turns a bad id into a 404 before a quota slot
+  // has been claimed for a request that was never going to work.
+  if (editMessageId) {
+    const target = await getMessage(editMessageId)
+
+    if (!target || target.conversation_id !== conversationId || target.role !== 'user') {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
   }
@@ -166,16 +196,48 @@ export async function POST(request: Request) {
       conversationId ?? (await createConversation(user.id, { provider, modelId }))
     if (!conversationId) createdConversationId = targetId
 
-    // Loaded before the new row is written, then combined in memory. Re-reading
-    // afterwards would cost a second round trip for the same answer.
-    const priorMessages = conversationId ? await listByConversation(conversationId) : []
+    if (editMessageId) {
+      // The only destructive write in the application, and it is here rather
+      // than earlier for the reason the line above states: everything that can
+      // refuse has already run, so a spent allowance or a tripped breaker
+      // cannot cost someone their thread. One round trip, because PostgREST
+      // cannot span a transaction and an update that lands without its delete
+      // leaves a prompt followed by the answer to a different question.
+      const removed = await editMessageAndTruncate(editMessageId, text)
 
-    await appendMessage({
-      conversationId: targetId,
-      userId: user.id,
-      role: 'user',
-      content: text,
-    })
+      // Null means the row stopped being editable between the check above and
+      // this call. Nothing was written, so the throw lands in the catch below,
+      // which refunds the slot.
+      if (removed === null) {
+        throw new Error(`message ${editMessageId} was not editable`)
+      }
+
+      // Re-read rather than truncating the earlier list in memory. The delete
+      // predicate and listByConversation()'s ORDER BY are two halves of one
+      // rule about what "after" means, and reconstructing the result here would
+      // make this a third — free to disagree with both, and the disagreement
+      // would show up as the model answering a question it was not asked.
+      history = toUIMessages(await listByConversation(targetId))
+    } else {
+      // Loaded before the new row is written, then combined in memory.
+      // Re-reading afterwards would cost a second round trip for the same
+      // answer.
+      const priorMessages = conversationId
+        ? await listByConversation(conversationId)
+        : []
+
+      await appendMessage({
+        conversationId: targetId,
+        userId: user.id,
+        role: 'user',
+        content: text,
+      })
+
+      // The model must see the turn that was just written. Loading history and
+      // passing it unchanged would send everything EXCEPT the message being
+      // answered — the mistake architecture.md's example makes.
+      history = [...toUIMessages(priorMessages), message as UIMessage]
+    }
 
     assistantMessageId = await appendMessage({
       conversationId: targetId,
@@ -189,11 +251,6 @@ export async function POST(request: Request) {
     })
 
     await touchConversation(targetId)
-
-    // The model must see the turn that was just written. Loading history and
-    // passing it unchanged would send everything EXCEPT the message being
-    // answered — the mistake architecture.md's example makes.
-    history = [...toUIMessages(priorMessages), message as UIMessage]
   } catch (error) {
     console.error('[api/chat] could not start the exchange', error)
 
