@@ -432,6 +432,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - A fresh completion requested from the truncated history
 - The outline rail rebuilds automatically
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **The truncation lives inside `/api/chat`, below the "will reach a provider" line.** This is the whole feature. An edit is the first destructive write in the application, so the ordering rule that used to prevent a dangling prompt now prevents a destroyed conversation. `chatRequestSchema` gained an optional `editMessageId` rather than a `PATCH /api/messages/[id]` being added, because a separate endpoint puts the delete on the far side of the refusal path. Proven by mutation: moving it above `resolveModel()` and sending an edit with the allowance spent returned the *same* 429 and took the thread from six messages to three
+- **Shipped as `edit_message_and_truncate`, a `security invoker` plpgsql function.** PostgREST cannot span a transaction (F07), and an update that lands without its delete leaves a prompt followed by the answer to the question it used to be. Grants match the quota functions — revoked from `public`/`anon`, granted to `authenticated` — in a second migration, because Postgres grants execute to `public` by default and the first one inherited it
+- **The thread's order became total: `(created_at, id)`.** "Every message after this one" needs a definition of *after*, and `created_at` alone was not one. The plan's fix — excluding the target by id — was wrong in the other direction and would have deleted an *earlier* tied row; making the order total instead means truncation and display agree by construction. `listByConversation()` now orders on both, and the two must stay in step
+- **A tie test that looked right was flaky, and the mutation run is what exposed it.** With equal timestamps the tiebreak is a random uuid, so the answer sorted after the prompt only about half the time. Rewritten with four fixed ids as two deterministic assertions — the tied row after the prompt is removed, the tied row before it survives and still reads in order
+- **`sendMessage` does not reject on a refusal**, measured against the installed SDK: `makeRequest` catches, calls `onError`, and sets `status: 'error'`. The optimistic truncation is therefore undone by an effect watching `status`, not by a `.catch()` — which would have compiled, looked correct, and never once run
+- **`prepareSendMessagesRequest` was silently dropping the per-call body.** It built its body from scratch and ignored the `body` argument, so `editMessageId` never reached the server: the client truncated its view while the server appended, and the two only disagreed after a reload. Caught by checking the database rather than the screen
+- **The confirmation appears only when something would be lost**, and names the count. Editing the last prompt removes nothing, and a dialog that warns about deleting nothing is one people learn to dismiss without reading
+
 ### 20 Regenerate
 
 **UI:**

@@ -40,6 +40,91 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 3 — Conversation craft
 
+### 19 Edit and resend — 2026-08-06
+
+Hovering a user message reveals Edit; the bubble becomes an inline textarea;
+saving truncates the thread from that point and streams a fresh answer. The
+first destructive write in the application.
+
+**The ordering was the feature.** Every write before this one was additive, so
+"nothing is persisted until the request is certain to reach a provider" had only
+ever prevented a dangling prompt. An edit deletes, so the same line now prevents
+a destroyed conversation — and that is not an argument, it is a measurement.
+Moving `editMessageAndTruncate()` above `resolveModel()` and sending an edit
+with the daily allowance spent returned the **identical 429** and took a
+six-message thread down to three. The user would have lost their conversation to
+a request that gave them nothing. `editMessageId` therefore went onto
+`chatRequestSchema` rather than getting a `PATCH /api/messages/[id]` of its own,
+which would have put the delete on the far side of the refusal path by
+construction.
+
+**Two migrations, and the second one is the interesting one.**
+`edit_message_and_truncate` is `security invoker` plpgsql, because PostgREST
+cannot span a transaction and an update landing without its delete leaves a
+prompt followed by the answer to the question it used to be. Checking the live
+`proacl` afterwards showed `anon=X` — Postgres grants execute to `public` by
+default, and the quota functions had all been explicitly revoked. Nothing was
+actually reachable that way (the owner policies are `to authenticated`, so an
+anon caller matches no row), but "happens to be harmless" is a weaker guarantee
+than "not callable", so a follow-up migration matched the established posture.
+
+**The plan's tie fix was wrong, and fixing it properly changed the schema
+contract.** `build-plan.md` §19 asks to delete "every message with a later
+`created_at`", which is not a total order — and the plan's proposed guard
+(`id <> target`) would have deleted an *earlier* row that happened to tie.
+Making the order total instead — `(created_at, id)` in both the delete predicate
+and `listByConversation()` — means truncation and display agree by construction,
+so a reply can never survive beneath a prompt that no longer produced it. What
+the ordering promises is that agreement, not "the answer is always deleted": a
+tied row sorting *before* the prompt is displayed before it and correctly
+survives.
+
+**Three defects that compiled, linted, typechecked and looked right.**
+
+1. `sendMessage(...).catch(restore)` — the SDK's `makeRequest` catches, calls
+   `onError`, and sets `status: 'error'` rather than rejecting. That `.catch`
+   could never have run. Found by reading the compiled source rather than
+   trusting a promise-shaped signature; the restore now watches `status`.
+2. `prepareSendMessagesRequest` built its body from scratch and discarded the
+   per-call `body` it is handed, so `editMessageId` never reached the server.
+   The client truncated its view and the server appended — **the screen looked
+   perfect.** The database is what disagreed, and only after a reload. Caught by
+   querying `messages` instead of screenshotting the thread.
+3. The tie test was flaky: `(created_at, id)` breaks a tie on a random uuid, and
+   a fixture that let the ids fall where they may passed about half the time.
+   Rewritten with four fixed ids as two deterministic assertions. Exposed by a
+   mutation run that failed the *wrong* test, twice.
+
+**Verified:** 226 tests (12 new across `tests/server/edit-message.test.ts` and
+`tests/lib/schemas.test.ts`), typecheck, lint and a production build green.
+Browser pass at 1440px and on an emulated 360px coarse-pointer device, signed in
+by minting a session as at F18. Edit hidden at rest (`opacity: 0`), revealed on
+hover, present at `opacity: 1` on a coarse pointer, reachable by keyboard with
+the 1px focus ring — the opacity had to be read *after* the transition, per the
+F07 gotcha. Confirmation named "the 5 messages after it" correctly and was
+skipped entirely on a trailing prompt. Cancel discarded the draft. After a
+confirmed edit the database held exactly the edited prompt and its new answer,
+a reload matched the screen, and the outline rail rebuilt itself down to hidden
+(one prompt, below F18's threshold). **The refusal case end to end:** with the
+allowance spent, the screen restored all three prompts and the database still
+held all six rows.
+
+**Mutations.** Four, all landing where intended. The truncation moved above the
+provider line destroyed the thread on a refusal. Dropping the `id` tiebreaker
+left a tied answer stranded (`expected +0 to be 1`). Removing the `role = 'user'`
+guard made an assistant message editable. Widening nothing else — the suite was
+run three times after each fix to confirm determinism.
+
+**Note on the Key Decisions eviction.** The displaced F13 bullet was already
+present in `constraints.md` under **Secrets and keys**, so the move needed no
+new bullet — the same situation as F18's eviction.
+
+**Open after this feature.**
+
+- **Route-level behaviour still has no automated coverage.** The refusal-ordering check was run by hand against a live dev server and is recorded here rather than in the suite, because nothing exists to drive a Next route from vitest. That arrives at F36, and this is one of the specs it should carry.
+- **`tests/server/budget.test.ts` left the live circuit breaker tripped, and this is the second-order cost of having no local stack.** A network fault killed the suite mid-run; its `afterAll` restore never completed, and `shared_key_budget` was left at `estimated_usd = 11.0000` with `tripped_at` set — the shared key genuinely disabled for every user of the project. Restored by hand to `input_tokens = 3734`, `output_tokens = 4662`, `estimated_usd = 0.0406`, `tripped_at = null`. The F17 constraint already says this row is a singleton and not a fixture; what it did not anticipate is that *the restore is not atomic with the mutation*, so any abort between them leaves production tripped. The snapshot/restore pattern is not enough on its own. Worth fixing before F35 either by having the breaker test assert against a value it computes rather than one it writes, or by having it restore in a `finally` that cannot be skipped.
+- **A failed run can orphan fixture users.** `edit-message.test.ts`'s teardown used `Promise.all`, where one rejected delete discards the other's outcome; it left a real `stranger` row behind. Changed to `allSettled` with a logged failure. Other suites on the hosted project have the same shape and have not been changed.
+
 ### 18 Message outline rail — 2026-08-06
 
 The right column finally lists something. Every user prompt in the open
