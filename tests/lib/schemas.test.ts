@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { chatRequestSchema, chatSendSchema } from '@/lib/schemas'
+import { MAX_TITLE_LENGTH } from '@/lib/constants'
+import { chatRequestSchema, chatSendSchema, updateConversationSchema } from '@/lib/schemas'
 
 const EDIT_ID = '11111111-2222-4333-8444-555555555555'
 
@@ -172,5 +173,104 @@ describe('chatRequestSchema — send or regenerate', () => {
     delete withoutModel.modelId
 
     expect(chatRequestSchema.safeParse(withoutModel).success).toBe(false)
+  })
+})
+
+/**
+ * Feature 21 turned the conversation PATCH body into a union, and the union is
+ * what these are about.
+ *
+ * One endpoint now carries three unrelated intents — change the model, rename,
+ * pin — and the only thing that distinguishes them is the shape of the body. So
+ * the interesting failures are not "a bad title is accepted"; they are a body
+ * that means two things being quietly answered as one of them.
+ */
+describe('updateConversationSchema', () => {
+  const model = { provider: 'google' as const, modelId: 'gemini-3.6-flash' }
+
+  it('accepts each of the three intents on its own', () => {
+    expect(updateConversationSchema.safeParse(model).success).toBe(true)
+    expect(updateConversationSchema.safeParse({ title: 'Rent contract' }).success).toBe(
+      true,
+    )
+    expect(updateConversationSchema.safeParse({ pinned: true }).success).toBe(true)
+    expect(updateConversationSchema.safeParse({ pinned: false }).success).toBe(true)
+  })
+
+  /**
+   * The one that matters, and the reason every branch is `.strict()`.
+   *
+   * `z.union` tries its members in order and an ordinary zod object *strips*
+   * keys it does not declare. Without strict, this body matches the model branch
+   * first, `title` is dropped on the floor, and the route answers a rename it
+   * never performed — 200 with the old title still in the database.
+   *
+   * Verified by mutation rather than by reading: removing `.strict()` from
+   * `updateConversationModelSchema` turns this test red and leaves the rest of
+   * this describe green.
+   */
+  it('rejects a body claiming two intents at once', () => {
+    expect(updateConversationSchema.safeParse({ ...model, title: 'Both' }).success).toBe(
+      false,
+    )
+    expect(updateConversationSchema.safeParse({ title: 'Both', pinned: true }).success).toBe(
+      false,
+    )
+    expect(updateConversationSchema.safeParse({ ...model, pinned: true }).success).toBe(
+      false,
+    )
+  })
+
+  it('rejects an unknown key rather than quietly discarding it', () => {
+    // A typo in a client body would otherwise reach the server as a field
+    // nobody reads, and be answered as though it had been honoured.
+    expect(updateConversationSchema.safeParse({ titel: 'Typo' }).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ pinned: true, extra: 1 }).success).toBe(
+      false,
+    )
+  })
+
+  it('rejects a body that is none of the three', () => {
+    expect(updateConversationSchema.safeParse({}).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ archived: true }).success).toBe(false)
+  })
+
+  /**
+   * `.trim()` is declared before `.min()` and `.max()`, and on zod 4.4.3 checks
+   * run in declaration order — so the bounds see the trimmed value. Reversed,
+   * `'   '` passes `.min(1)` and is stored as an empty string, which is a
+   * conversation with no name in the sidebar and no way to tell why.
+   *
+   * Verified by mutation: moving `.trim()` after `.max()` turns the
+   * whitespace-only case and the padded-title case red together.
+   */
+  it('rejects an empty or whitespace-only title', () => {
+    expect(updateConversationSchema.safeParse({ title: '' }).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ title: '   ' }).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ title: '\n\t ' }).success).toBe(false)
+  })
+
+  it('trims before measuring, so padding cannot push a legal title over the cap', () => {
+    const exact = 'a'.repeat(MAX_TITLE_LENGTH)
+    const parsed = updateConversationSchema.safeParse({ title: `  ${exact}  ` })
+
+    expect(parsed.success).toBe(true)
+    // The stored value is the trimmed one. The server is authoritative about
+    // whitespace; a client that trims too is being convenient, not the guard.
+    expect(parsed.success && 'title' in parsed.data && parsed.data.title).toBe(exact)
+  })
+
+  it('rejects a title one character over the cap', () => {
+    expect(
+      updateConversationSchema.safeParse({ title: 'a'.repeat(MAX_TITLE_LENGTH + 1) })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rejects a pin that is not a boolean', () => {
+    // Desired state, so the value has to be one of exactly two things. A string
+    // 'true' arriving from a hand-rolled fetch must not read as pinned.
+    expect(updateConversationSchema.safeParse({ pinned: 'true' }).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ pinned: null }).success).toBe(false)
   })
 })

@@ -9,6 +9,7 @@
 import { z } from 'zod'
 
 import {
+  MAX_TITLE_LENGTH,
   PROVIDER_KEY_LABEL_MAX_LENGTH,
   PROVIDER_KEY_MAX_LENGTH,
   PROVIDER_KEY_MIN_LENGTH,
@@ -144,7 +145,7 @@ export const titleRequestSchema = z.object({
 export type TitleRequest = z.infer<typeof titleRequestSchema>
 
 /**
- * The body of `PATCH /api/conversations/[id]`.
+ * Pointing a conversation at a different model. (F15)
  *
  * Deliberately the same two fields, with the same bounds, as `chatRequestSchema`
  * carries — a model reaches the server through exactly these two routes, and
@@ -156,12 +157,72 @@ export type TitleRequest = z.infer<typeof titleRequestSchema>
  * reason written on that function: a schema that also knew the catalog would be
  * a second copy of the rule.
  */
-export const updateConversationModelSchema = z.object({
-  provider: providerSchema,
-  modelId: z.string().min(1).max(120),
-})
+export const updateConversationModelSchema = z
+  .object({
+    provider: providerSchema,
+    modelId: z.string().min(1).max(120),
+  })
+  .strict()
 
 export type UpdateConversationModelInput = z.infer<typeof updateConversationModelSchema>
+
+/**
+ * Giving a conversation a name the user chose. (F21)
+ *
+ * **The check order is load-bearing, and it was measured rather than assumed.**
+ * On zod 4.4.3 checks run in declaration order, so `.trim()` first means the
+ * length bounds see the trimmed value: `'   '` fails `.min(1)` instead of
+ * passing it and being stored as `''`, and a 60-character title survives the
+ * padding a paste brought with it. Reversed, both of those go the other way.
+ *
+ * The server is authoritative about the whitespace. A client that trims too is
+ * being convenient, never the guard.
+ *
+ * `normalizeTitle()` is deliberately not applied here. That function exists to
+ * clean up what a *model* returned; stripping quotation marks a person typed on
+ * purpose would be wrong.
+ */
+export const conversationRenameSchema = z
+  .object({
+    title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+  })
+  .strict()
+
+/**
+ * Lifting a conversation out of the recency ordering, or letting it back in. (F21)
+ *
+ * Desired state, never a delta. `{pinned: true}` means "end up pinned", so a
+ * retry, a double-click, and a resent request all land in the same place — where
+ * a toggle would undo itself. That the column is a timestamp rather than a
+ * boolean is a server-side detail: only its nullness is read today, and the type
+ * leaves "most recently pinned first" available later.
+ */
+export const conversationPinSchema = z
+  .object({
+    pinned: z.boolean(),
+  })
+  .strict()
+
+/**
+ * The body of `PATCH /api/conversations/[id]` — one intent at a time.
+ *
+ * **Every branch is `.strict()`, for the reason `chatRequestSchema` records.**
+ * `z.union` tries branches in order and an ordinary zod object *strips* keys it
+ * does not declare, so a body carrying both `title` and `pinned` would match the
+ * rename branch, lose the pin on the floor, and be answered as though only a
+ * rename had been asked for. Strict makes that body match nothing and fail
+ * loudly. Feature 22's archive slots in as a fourth branch.
+ *
+ * The route narrows with `'title' in parsed.data` / `'pinned' in parsed.data`,
+ * which TypeScript resolves without an assertion.
+ */
+export const updateConversationSchema = z.union([
+  updateConversationModelSchema,
+  conversationRenameSchema,
+  conversationPinSchema,
+])
+
+export type UpdateConversationInput = z.infer<typeof updateConversationSchema>
 
 /**
  * The body of `POST /api/keys`.
