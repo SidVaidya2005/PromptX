@@ -64,6 +64,15 @@ export function Chat({
 }: ChatProps) {
   const router = useRouter()
   const createdConversationId = useRef<string | null>(null)
+
+  /**
+   * The database id of the row the last prompt became, until it is adopted.
+   *
+   * A ref for the same reason `createdConversationId` is one: it is a fact the
+   * server reported mid-stream that nothing renders from, and it exists only
+   * until `onFinish` puts it where it belongs.
+   */
+  const persistedPromptId = useRef<string | null>(null)
   const [model, setModel] = useState({ provider, modelId })
   const { changeModel, error: modelError } = useModelMutation()
 
@@ -163,8 +172,17 @@ export function Chat({
         if (part.type === 'data-conversation') {
           createdConversationId.current = (part.data as { id: string }).id
         }
+
+        // The row this turn's prompt became. Adopted in onFinish rather than
+        // here: rewriting a message's id mid-stream would change its React key
+        // and tear down the bubble that is currently being written into.
+        if (part.type === 'data-prompt-message') {
+          persistedPromptId.current = (part.data as { id: string }).id
+        }
       },
       onFinish: () => {
+        adoptPersistedPromptId()
+
         const created = createdConversationId.current
 
         if (created) {
@@ -203,20 +221,64 @@ export function Chat({
   const restorePoint = useRef<ChatMessage[] | null>(null)
 
   /**
+   * Replaces the last prompt's invented id with the row it actually became.
+   *
+   * The client mints an id for the message it renders the moment someone
+   * presses send; the database mints a different one when the row is written.
+   * Nothing minds the difference until something has to *name* that row — and
+   * feature 19's edit does, which is how this surfaced: editing a message sent
+   * in the same page session put an SDK id where the route required a uuid and
+   * was refused. A reload fixed it, which is exactly what made it easy to miss.
+   *
+   * Only the trailing prompt is touched. Everything before it either came from
+   * the server already or was corrected by this same call on its own turn.
+   */
+  function adoptPersistedPromptId() {
+    const persisted = persistedPromptId.current
+    if (!persisted) return
+
+    persistedPromptId.current = null
+
+    setMessages((current) => {
+      const index = current.findLastIndex((message) => message.role === 'user')
+      const prompt = current[index]
+      if (!prompt || prompt.id === persisted) return current
+
+      const next = [...current]
+      next[index] = { ...prompt, id: persisted }
+      return next
+    })
+  }
+
+  /**
    * Rewrites a prompt and regenerates from it, dropping everything after it.
    *
-   * The thread is truncated optimistically and the server is told which message
-   * to edit through a per-call body override, so the id never has to live in
-   * React state where every other send path would have to remember to clear it.
+   * `messageId` is the SDK's own edit primitive, not a hand-rolled truncation:
+   * it slices the thread to include that message, then replaces it **in place,
+   * keeping its id**. That last part is why it is used here. The earlier version
+   * called `setMessages(slice)` and then `sendMessage({ text })`, which pushed a
+   * *new* message with a *new* invented id — while the database had updated the
+   * original row and kept its uuid. The two then disagreed about what the
+   * rewritten prompt was called, so editing the same message twice in one
+   * session sent an id the server had never issued.
+   *
+   * The server is told which row to rewrite through a per-call body override, so
+   * the id never has to live in React state where every other send path would
+   * have to remember to clear it.
    */
   function editMessage(messageId: string, nextText: string) {
-    const index = messages.findIndex((candidate) => candidate.id === messageId)
-    if (index < 0) return
+    // Guarded because `sendMessage` throws — not rejects — when the id is not in
+    // the thread or is not a user message, and this call is deliberately not
+    // awaited.
+    const target = messages.find((candidate) => candidate.id === messageId)
+    if (!target || target.role !== 'user') return
 
     restorePoint.current = messages
-    setMessages(messages.slice(0, index))
 
-    void sendMessage({ text: nextText }, { body: { editMessageId: messageId } })
+    void sendMessage(
+      { text: nextText, messageId },
+      { body: { editMessageId: messageId } },
+    )
   }
 
   /**

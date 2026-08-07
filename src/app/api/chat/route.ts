@@ -247,6 +247,8 @@ export async function POST(request: Request) {
   // exactly as it found it.
 
   let createdConversationId: string | null = null
+  /** The row this turn's prompt became, sent back so the client can adopt it. */
+  let promptMessageId: string | null = null
   let targetId: string
   let assistantMessageId: string
   let history: UIMessage[]
@@ -313,7 +315,10 @@ export async function POST(request: Request) {
       // would show up as the model answering a question it was not asked.
       history = toUIMessages(await listByConversation(targetId))
     } else {
-      await appendMessage({
+      // The id is kept, not discarded. The client minted its own for the copy
+      // it is rendering, and that one names no row — so it is told which row
+      // this turn actually became. See the write below the stream.
+      promptMessageId = await appendMessage({
         conversationId: targetId,
         userId: user.id,
         role: 'user',
@@ -436,6 +441,29 @@ export async function POST(request: Request) {
           writer.write({
             type: 'data-conversation',
             data: { id: createdConversationId },
+            transient: true,
+          })
+        }
+
+        /**
+         * Which row the prompt became.
+         *
+         * The client mints an id for the message it optimistically renders, and
+         * that id names nothing in the database — so anything later that has to
+         * point at this turn (feature 19's edit) would be pointing at a string
+         * the server has never seen. It was: an edit of a message sent in the
+         * same page session sent an SDK id where a uuid was required and was
+         * refused. Reported the same way the conversation id already is, and
+         * transient for the same reason — it corrects client state and must
+         * never become a message in the thread.
+         *
+         * Only on a plain send. An edit rewrites a row that already has an id
+         * the client knows, and a regeneration writes no prompt at all.
+         */
+        if (promptMessageId) {
+          writer.write({
+            type: 'data-prompt-message',
+            data: { id: promptMessageId },
             transient: true,
           })
         }

@@ -129,6 +129,45 @@ before the request landed. The sweep doing exactly its job, observed by accident
 `progress-tracker.md` (`bytea` is hex over PostgREST) was already held in
 `constraints.md` under Database access, so the move needed no new bullet.
 
+#### Follow-up: the same defect, live in feature 19
+
+Recorded above as latent and then fixed, because it was not latent. F19's
+`editMessageId` was exposed to the id divergence in **two** independent ways,
+each reachable without doing anything unusual:
+
+1. **Edit a message sent in the same session.** Its id was invented by the
+   client the moment send was pressed and never named a row. 400.
+2. **Edit the same message twice.** `editMessage` called
+   `setMessages(slice)` then `sendMessage({ text })`, which pushes a *new*
+   message with a *new* invented id — while `edit_message_and_truncate` updates
+   the original row and keeps its uuid. The two then disagreed about what the
+   rewritten prompt was called. 400 on the second edit.
+
+Both are cured by giving the client the real id rather than by teaching the
+server to accept a fake one:
+
+- The route reports the row a prompt became as a transient `data-prompt-message`
+  part, the same mechanism F08 already uses for the conversation id. The client
+  adopts it in `onFinish`, never mid-stream — rewriting an id changes a React key
+  and would tear down the bubble currently being written into.
+- `editMessage` now uses `sendMessage`'s own `messageId` option, which slices the
+  thread to include that message and replaces it **in place, keeping its id**.
+  That is the edit primitive F19 hand-rolled, and using it removes the manual
+  `setMessages(slice)` as well.
+
+**Both halves measured, separately.** Removing the adoption call broke case 1 and
+left case 2 working; removing `messageId` broke case 2 while case 1 still passed
+— the first edit returned 200 and the second 400, which is exactly the shape the
+bug had. Each 400 was confirmed to be `path: ["editMessageId"], "Invalid UUID"`
+rather than some other refusal. With both restored, the full sequence — send into
+an existing conversation, edit, edit again, no reload — returns 200 three times
+and leaves one user row per turn, rewritten in place.
+
+Why F19 shipped without seeing it: a reload cures the divergence, and a *new*
+conversation never shows it, because `router.replace()` is a real navigation that
+remounts `Chat` with database ids. `router.refresh()`, which every subsequent
+message uses, does not.
+
 ### 19 Edit and resend — 2026-08-06
 
 Hovering a user message reveals Edit; the bubble becomes an inline textarea;
