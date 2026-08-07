@@ -24,6 +24,7 @@ import {
 import {
   appendMessage,
   completeMessage,
+  deleteMessage,
   editMessageAndTruncate,
   failMessage,
   getMessage,
@@ -68,6 +69,14 @@ export const runtime = 'nodejs'
  * the thread byte-for-byte as it was, which is only true because the truncation
  * sits below the line with every other write and not above it.
  *
+ * Feature 20 adds the third shape, `regenerate`, and it is the same
+ * argument once more: replacing an answer deletes the old one, so that delete
+ * belongs below the line with everything else destructive. What it does NOT do
+ * is write a user message — the prompt is already stored, and a regeneration
+ * that appended it again would leave the thread holding the same question
+ * twice. That is the failure this branch exists to prevent, and it is invisible
+ * from the screen: the client's view would look exactly right until a reload.
+ *
  * **The assistant row is created up front in `streaming` status**, and its id is
  * held for the life of the stream. Without it there is no stable row to update
  * on failure: at that moment the newest message is the *user's*, so any
@@ -88,23 +97,39 @@ export async function POST(request: Request) {
     )
   }
 
-  const { conversationId, editMessageId, message, provider, modelId } = parsed.data
+  const body = parsed.data
+  const { conversationId, provider, modelId } = body
 
-  const text = textOf(message)
-  if (!text.trim()) {
-    return NextResponse.json(
-      { error: 'Invalid request', code: 'invalid_input' },
-      { status: 400 },
-    )
-  }
+  // Narrowed by the presence of the field rather than by a discriminant tag.
+  // The AI SDK decides which shape a request is — `trigger` is its word, sent
+  // from `prepareSendMessagesRequest` — so a literal tag here would be the
+  // client asserting something the body already says, and free to disagree
+  // with it.
+  if ('regenerate' in body) {
+    // Nothing to regenerate in a conversation that does not exist yet. Same
+    // incoherence as an edit without one, and the same answer.
+    if (!conversationId) {
+      return NextResponse.json(
+        { error: 'Invalid request', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
+  } else {
+    if (!textOf(body.message).trim()) {
+      return NextResponse.json(
+        { error: 'Invalid request', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
 
-  // There is nothing to edit in a conversation that does not exist yet, so this
-  // pairing is incoherent rather than merely unauthorised.
-  if (editMessageId && !conversationId) {
-    return NextResponse.json(
-      { error: 'Invalid request', code: 'invalid_input' },
-      { status: 400 },
-    )
+    // There is nothing to edit in a conversation that does not exist yet, so
+    // this pairing is incoherent rather than merely unauthorised.
+    if (body.editMessageId && !conversationId) {
+      return NextResponse.json(
+        { error: 'Invalid request', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
   }
 
   // An existing conversation must be the caller's. RLS is what makes this
@@ -117,12 +142,47 @@ export async function POST(request: Request) {
     }
   }
 
-  // Checked here, above the provider line, because it is a READ. The edit
-  // itself must wait — it deletes messages — but proving the target exists and
-  // is editable costs nothing and turns a bad id into a 404 before a quota slot
-  // has been claimed for a request that was never going to work.
-  if (editMessageId) {
-    const target = await getMessage(editMessageId)
+  /**
+   * The thread, loaded once, above the line.
+   *
+   * Reads may live above it; only WRITES may not. The rule is about what a
+   * refusal leaves behind, and a select leaves nothing — so hoisting this costs
+   * no safety and lets the regenerate branch decide, before any slot is
+   * claimed, whether the request was ever going to work.
+   *
+   * Not loaded for an edit. That path re-reads *after* truncating, for the
+   * reason written where it does so, and a copy taken now would be the thread
+   * as it was before the delete — the one thing it must not send to the model.
+   */
+  const isEdit = !('regenerate' in body) && Boolean(body.editMessageId)
+
+  /** The assistant row a regeneration replaces, decided from the thread below. */
+  let regenerateTargetId: string | null = null
+
+  const priorMessages =
+    conversationId && !isEdit ? await listByConversation(conversationId) : []
+
+  // Checked here, above the provider line, because it is a READ — the same
+  // split feature 19 uses. Proving the target is regenerable costs nothing and
+  // turns a bad id into a 404 before a quota slot has been claimed for a
+  // request that was never going to work. Only the delete has to wait.
+  if ('regenerate' in body) {
+    const last = priorMessages.at(-1)
+
+    // WHICH message is not the client's to say — it names no id, because it
+    // cannot reliably know one. What it asks for is "another answer to the
+    // newest exchange", and the newest exchange is read from the database here.
+    // An empty conversation, or one whose last row is a prompt with no answer,
+    // has nothing to replace.
+    if (!last || last.role !== 'assistant') {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    // Held for the delete below. Read here rather than there so the two cannot
+    // end up meaning different rows.
+    regenerateTargetId = last.id
+  } else if (body.editMessageId) {
+    const target = await getMessage(body.editMessageId)
 
     if (!target || target.conversation_id !== conversationId || target.role !== 'user') {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -196,20 +256,54 @@ export async function POST(request: Request) {
       conversationId ?? (await createConversation(user.id, { provider, modelId }))
     if (!conversationId) createdConversationId = targetId
 
-    if (editMessageId) {
-      // The only destructive write in the application, and it is here rather
-      // than earlier for the reason the line above states: everything that can
-      // refuse has already run, so a spent allowance or a tripped breaker
-      // cannot cost someone their thread. One round trip, because PostgREST
+    if ('regenerate' in body) {
+      // Destructive, so it waits for the line above like every other delete —
+      // a spent allowance or a tripped breaker must not cost someone the answer
+      // they already had. One statement, so it is atomic on its own and needs
+      // no transaction: the row was proved to be the LAST message above, which
+      // makes "everything after it" empty and leaves the (created_at, id) rule
+      // with nothing to decide.
+      // Non-null here by construction: the branch above sets it before any of
+      // this runs, and returns 404 when it cannot. Checked rather than asserted,
+      // because `code-standards.md` permits no `!` on a value that came in with
+      // a request.
+      if (!regenerateTargetId) {
+        throw new Error('regenerate reached the write path with no target')
+      }
+
+      const removed = await deleteMessage(regenerateTargetId)
+
+      // False means the row vanished between the check above and this call.
+      // Nothing else was written, so the throw lands in the catch below, which
+      // refunds the slot.
+      if (!removed) {
+        throw new Error(`message ${regenerateTargetId} was already gone`)
+      }
+
+      // Sliced rather than re-read, and this is safe for a reason the edit path
+      // below cannot claim: exactly one row was deleted and it was proved to be
+      // the last, so dropping the tail IS the post-delete thread. What the model
+      // must see is the prompt; what it must not see is the answer being
+      // replaced.
+      //
+      // No user message is appended here. The prompt is already a row — that is
+      // the whole difference between regenerating and sending.
+      history = toUIMessages(priorMessages.slice(0, -1))
+    } else if (body.editMessageId) {
+      // Destructive for the same reason, and more so: this one deletes every
+      // message after the one it rewrites. One round trip, because PostgREST
       // cannot span a transaction and an update that lands without its delete
       // leaves a prompt followed by the answer to a different question.
-      const removed = await editMessageAndTruncate(editMessageId, text)
+      const removed = await editMessageAndTruncate(
+        body.editMessageId,
+        textOf(body.message),
+      )
 
       // Null means the row stopped being editable between the check above and
       // this call. Nothing was written, so the throw lands in the catch below,
       // which refunds the slot.
       if (removed === null) {
-        throw new Error(`message ${editMessageId} was not editable`)
+        throw new Error(`message ${body.editMessageId} was not editable`)
       }
 
       // Re-read rather than truncating the earlier list in memory. The delete
@@ -219,24 +313,18 @@ export async function POST(request: Request) {
       // would show up as the model answering a question it was not asked.
       history = toUIMessages(await listByConversation(targetId))
     } else {
-      // Loaded before the new row is written, then combined in memory.
-      // Re-reading afterwards would cost a second round trip for the same
-      // answer.
-      const priorMessages = conversationId
-        ? await listByConversation(conversationId)
-        : []
-
       await appendMessage({
         conversationId: targetId,
         userId: user.id,
         role: 'user',
-        content: text,
+        content: textOf(body.message),
       })
 
       // The model must see the turn that was just written. Loading history and
       // passing it unchanged would send everything EXCEPT the message being
-      // answered — the mistake architecture.md's example makes.
-      history = [...toUIMessages(priorMessages), message as UIMessage]
+      // answered — the mistake architecture.md's example makes. `priorMessages`
+      // was read above the line, before this insert, so it does not contain it.
+      history = [...toUIMessages(priorMessages), body.message as UIMessage]
     }
 
     assistantMessageId = await appendMessage({

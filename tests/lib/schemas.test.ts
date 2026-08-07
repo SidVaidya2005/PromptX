@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { chatRequestSchema } from '@/lib/schemas'
+import { chatRequestSchema, chatSendSchema } from '@/lib/schemas'
+
+const EDIT_ID = '11111111-2222-4333-8444-555555555555'
 
 /**
  * `editMessageId` was added to a schema every send in the application already
@@ -41,7 +43,11 @@ describe('chatRequestSchema', () => {
     })
 
     expect(parsed.success).toBe(true)
-    expect(parsed.data?.editMessageId).toBe('11111111-2222-4333-8444-555555555555')
+    // Read through the send branch rather than off the union: `editMessageId`
+    // exists on one member only, which is the entire point of the split below.
+    expect(chatSendSchema.parse({ ...base, editMessageId: EDIT_ID }).editMessageId).toBe(
+      EDIT_ID,
+    )
   })
 
   it('rejects anything that is not a uuid', () => {
@@ -65,5 +71,106 @@ describe('chatRequestSchema', () => {
     delete withoutConversation.conversationId
 
     expect(chatRequestSchema.safeParse(withoutConversation).success).toBe(false)
+  })
+})
+
+/**
+ * Feature 20 split this schema into two shapes, and the split is the feature.
+ *
+ * A regeneration carries no `message` — the prompt is already a row, and not
+ * re-sending it is what stops the server appending the same question twice.
+ * These tests are about the seam between the two branches rather than about
+ * either one, because that seam is where the failure would be silent.
+ */
+describe('chatRequestSchema — send or regenerate', () => {
+  const regenerate = {
+    conversationId: base.conversationId,
+    provider: base.provider,
+    modelId: base.modelId,
+    regenerate: true,
+  }
+
+  it('accepts a regeneration carrying no message at all', () => {
+    expect(chatRequestSchema.safeParse(regenerate).success).toBe(true)
+  })
+
+  it('rejects a body that is neither — no message and no regenerate flag', () => {
+    const neither = {
+      conversationId: base.conversationId,
+      provider: base.provider,
+      modelId: base.modelId,
+    }
+
+    expect(chatRequestSchema.safeParse(neither).success).toBe(false)
+  })
+
+  /**
+   * The one that matters, and the reason both branches are `.strict()`.
+   *
+   * `z.union` tries its members in order, and an ordinary zod object *strips*
+   * keys it does not declare. Without strict, this body matches the send branch,
+   * the `regenerate` flag is silently dropped, and the route handles a
+   * regeneration as a perfectly ordinary send — appending the prompt a second
+   * time while the screen shows exactly the right thing. Nothing surfaces until
+   * a reload.
+   *
+   * Verified by mutation rather than by reading: removing `.strict()` from
+   * `chatSendSchema` turns this test red and leaves every other test in this
+   * file green, which is what makes it the guard rather than decoration.
+   */
+  it('rejects a body claiming to be both a send and a regeneration', () => {
+    const both = { ...base, regenerate: true }
+
+    expect(chatRequestSchema.safeParse(both).success).toBe(false)
+  })
+
+  it('rejects an unknown key rather than quietly discarding it', () => {
+    // Same strictness, seen from the side that is easier to trip over: a typo
+    // in a per-call body override reaches the server as a field nobody reads.
+    expect(chatRequestSchema.safeParse({ ...regenerate, regenrate: true }).success).toBe(
+      false,
+    )
+  })
+
+  it('rejects a regenerate flag that is not literally true', () => {
+    // A literal rather than a boolean, so `regenerate: false` cannot arrive and
+    // mean "an ordinary send" — a shape with no `message` that the route would
+    // then have to decide about.
+    expect(
+      chatRequestSchema.safeParse({ ...regenerate, regenerate: false }).success,
+    ).toBe(false)
+  })
+
+  /**
+   * The regression test for the bug this branch was redesigned around.
+   *
+   * The first version named the assistant row being replaced, taking the
+   * `messageId` the AI SDK offers `prepareSendMessagesRequest`. That id is a
+   * database uuid only when the message came from the server; one that has just
+   * streamed carries an id the SDK generated, and `a6i8GltgJ1K7KZtE` below is a
+   * real value observed on a real second regeneration, which the route refused
+   * as a malformed uuid.
+   *
+   * The schema now carries no id at all, so this asserts the field is gone
+   * rather than that it validates. Strict is what makes that assertion possible:
+   * a leftover id is a rejected body, not a silently ignored key.
+   */
+  it('carries no message id, because the client cannot reliably know one', () => {
+    expect(
+      chatRequestSchema.safeParse({
+        ...regenerate,
+        regenerateMessageId: 'a6i8GltgJ1K7KZtE',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('still requires a provider and model on a regeneration', () => {
+    // Both live on the shared base rather than on the send branch, because a
+    // regeneration may name a DIFFERENT model from the conversation's own — that
+    // is the whole "with a different model" affordance, and it arrives here.
+    const withoutModel: Record<string, unknown> = { ...regenerate }
+    delete withoutModel.modelId
+
+    expect(chatRequestSchema.safeParse(withoutModel).success).toBe(false)
   })
 })

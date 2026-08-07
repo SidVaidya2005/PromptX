@@ -141,6 +141,43 @@ export async function getMessage(id: string): Promise<Message | null> {
 }
 
 /**
+ * Removes one message, returning false when there was nothing to remove.
+ *
+ * Feature 20's half of the regenerate: the assistant answer being replaced is
+ * deleted before its replacement is written, so the thread never briefly holds
+ * two answers to one prompt.
+ *
+ * A boolean rather than void, for the reason `deleteConversation()` gives. RLS
+ * filters someone else's row out before the delete sees it, and a delete that
+ * matched nothing is reported by PostgREST exactly like one that matched — so
+ * without the `.select()` a write that silently did nothing is indistinguishable
+ * from a write that worked. The caller decides what to do about false; here it
+ * means the row stopped existing between the check and this call.
+ *
+ * No truncation and no ordering rule, unlike `editMessageAndTruncate()` below.
+ * The route has already established that this row is the *last* message in its
+ * conversation, so "everything after it" is empty by construction and the
+ * `(created_at, id)` comparison has nothing to decide.
+ */
+export async function deleteMessage(id: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('messages')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/messages] deleteMessage failed', error)
+    throw new Error('Failed to delete the message')
+  }
+
+  return data !== null
+}
+
+/**
  * Replaces a user message's content and deletes everything after it.
  *
  * Returns how many messages were removed, or **null** when the message does not
