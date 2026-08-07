@@ -13,6 +13,7 @@ import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 import { Composer } from '@/components/chat/Composer'
 import { Thread } from '@/components/chat/Thread'
 import { useModelMutation } from '@/components/chat/use-model-mutation'
+import { useConversationMutation } from '@/components/sidebar/use-conversation-mutation'
 import { useOutlineTracking } from '@/components/chat/use-outline-tracking'
 import { useOutlinePublisher } from '@/components/shell/use-outline'
 
@@ -30,6 +31,8 @@ type ChatProps = {
   remaining: number
   /** False while the global monthly ceiling is spent. Irrelevant to a BYOK model. */
   sharedKeyAvailable: boolean
+  /** The conversation's standing instruction. Null on /chat and when unset. */
+  systemPrompt: string | null
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -60,6 +63,7 @@ export function Chat({
   configuredProviders,
   remaining,
   sharedKeyAvailable,
+  systemPrompt: initialSystemPrompt,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
@@ -75,6 +79,41 @@ export function Chat({
   const persistedPromptId = useRef<string | null>(null)
   const [model, setModel] = useState({ provider, modelId })
   const { changeModel, error: modelError } = useModelMutation()
+
+  /**
+   * The conversation's standing instruction, seeded from the row for the same
+   * reason the model is: it changes without a navigation, and the row is the
+   * source of truth on load. (F23)
+   */
+  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt)
+  const { setSystemPrompt, error: systemPromptError } = useConversationMutation()
+
+  /**
+   * Saves the prompt, and persists it only when there is a row to persist to.
+   *
+   * The `/chat` case mirrors the model exactly: no conversation exists yet, so
+   * the value stays local and rides along in the request body, where
+   * `createConversation()` writes it. The server honours a body prompt ONLY on
+   * that creation path — for an existing conversation it reads the row — so the
+   * local-first move here cannot turn into a per-request override.
+   *
+   * Returns false on a failed write so the dialog can stay open holding the
+   * text. Unlike the model, the local state is NOT moved first: a system prompt
+   * that appears to have saved and did not would silently change how every
+   * later answer reads, and the composer would agree with a database that does
+   * not.
+   */
+  async function saveSystemPrompt(next: string | null): Promise<boolean> {
+    if (!conversationId) {
+      setSystemPromptState(next)
+      return true
+    }
+
+    if (!(await setSystemPrompt(conversationId, next))) return false
+
+    setSystemPromptState(next)
+    return true
+  }
 
   /**
    * Applies a model choice, and persists it when there is a row to persist to.
@@ -125,6 +164,16 @@ export function Chat({
             modelId: model.modelId,
 
             /**
+             * Only ever acted on when this request CREATES the conversation.
+             * On `/chat` there is no row to have stored one, so this is the
+             * only way a prompt chosen before the first message can reach the
+             * server; for an existing conversation the route reads the row and
+             * ignores this. Sent unconditionally rather than conditionally,
+             * because a body that changes shape by route is a second rule.
+             */
+            systemPrompt,
+
+            /**
              * Which of the two request shapes this is, decided by the SDK
              * rather than by us. `regenerate()` sets `trigger` itself, so there
              * is no flag here for a caller to forget.
@@ -158,8 +207,11 @@ export function Chat({
       }),
     // The chosen model, not the prop: the closure captures these values, so a
     // transport left on the initial props would keep sending to the model the
-    // conversation loaded with however many times the picker was used.
-    [conversationId, model.provider, model.modelId],
+    // conversation loaded with however many times the picker was used. The
+    // system prompt is here for exactly that reason too — on `/chat` it is the
+    // body that carries it, so a stale closure would create the conversation
+    // with the prompt that was set before the user edited it.
+    [conversationId, model.provider, model.modelId, systemPrompt],
   )
 
   const { messages, sendMessage, regenerate, setMessages, status, stop, error } =
@@ -465,6 +517,9 @@ export function Chat({
         sharedKeyAvailable={sharedKeyAvailable}
         onSelectModel={selectModel}
         isStreaming={isStreaming}
+        systemPrompt={systemPrompt}
+        systemPromptError={systemPromptError}
+        onSaveSystemPrompt={saveSystemPrompt}
         onSend={(text) => void sendMessage({ text })}
         onStop={() => void stop()}
       />

@@ -13,7 +13,7 @@
  * `src/lib/conversations.ts`.
  */
 
-import { MAX_TITLE_LENGTH } from '@/lib/constants'
+import { MAX_TITLE_LENGTH, SYSTEM_PROMPT_PREVIEW_LENGTH } from '@/lib/constants'
 
 /**
  * Both curly forms are here because a model writing prose reaches for them even
@@ -92,4 +92,32 @@ function truncateOnWordBoundary(title: string): string {
 
   // The cut can land straight after a comma, so tidy the same edge twice.
   return cut.replace(TRAILING_PUNCTUATION, '').trimEnd()
+}
+
+/**
+ * What the composer's system prompt control shows on its trigger. (F23)
+ *
+ * Lives here rather than beside the component for the reason F05 established:
+ * vitest runs in a node environment against `tests/`, so a pure helper is the
+ * only part of a UI feature that can have automated coverage at all.
+ *
+ * Whitespace collapses before truncating, which is the whole reason this is not
+ * a `slice` at the call site. A prompt written as a paragraph list opens with a
+ * newline as often as not, and truncating the raw string would show an empty
+ * trigger for a prompt that is definitely set — the one state the control must
+ * never be confusable with "Default".
+ */
+export function systemPromptPreview(systemPrompt: string | null): string {
+  if (!systemPrompt) return 'Default'
+
+  const flattened = systemPrompt.replace(/\s+/g, ' ').trim()
+
+  // Also collapses to 'Default' for a prompt that was nothing but whitespace.
+  // The schema makes that unreachable from the server, but this function is
+  // handed local state on /chat before anything has been parsed.
+  if (flattened === '') return 'Default'
+
+  return flattened.length > SYSTEM_PROMPT_PREVIEW_LENGTH
+    ? `${flattened.slice(0, SYSTEM_PROMPT_PREVIEW_LENGTH)}\u2026`
+    : flattened
 }

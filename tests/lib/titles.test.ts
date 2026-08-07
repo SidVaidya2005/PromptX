@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_TITLE_LENGTH } from '@/lib/constants'
-import { normalizeTitle } from '@/lib/titles'
+import { MAX_TITLE_LENGTH, SYSTEM_PROMPT_PREVIEW_LENGTH } from '@/lib/constants'
+import { normalizeTitle, systemPromptPreview } from '@/lib/titles'
 
 /**
  * Everything asserted here is something a model has a real habit of doing when
@@ -107,5 +107,45 @@ describe('normalizeTitle', () => {
     const title = normalizeTitle(long)
 
     expect(title).toBe('a'.repeat(MAX_TITLE_LENGTH - 1))
+  })
+})
+
+/**
+ * The composer's system prompt trigger. (F23)
+ *
+ * The only part of that control a node-environment suite can reach, and the
+ * part most likely to be quietly wrong: a prompt that is definitely set must
+ * never render as "Default", because that is the one string the control uses to
+ * mean the opposite.
+ */
+describe('systemPromptPreview', () => {
+  it('says Default for null', () => {
+    expect(systemPromptPreview(null)).toBe('Default')
+  })
+
+  it('says Default for a prompt that is only whitespace', () => {
+    // Unreachable from the server — the schema collapses it to null — but this
+    // is handed local state on /chat before anything has been parsed.
+    expect(systemPromptPreview('   \n\t ')).toBe('Default')
+  })
+
+  it('shows a short prompt whole', () => {
+    expect(systemPromptPreview('Be terse.')).toBe('Be terse.')
+  })
+
+  it('collapses newlines before truncating, not after', () => {
+    // The case the naive slice gets wrong: a prompt that opens with a blank
+    // line would truncate to nothing and render as an empty trigger, which is
+    // indistinguishable from "Default" at a glance.
+    const prompt = '\n\nYou are a careful editor.\nPrefer plain language.'
+
+    expect(systemPromptPreview(prompt).startsWith('You are a careful editor.')).toBe(true)
+  })
+
+  it('ellipsises beyond the preview length', () => {
+    const preview = systemPromptPreview('a'.repeat(SYSTEM_PROMPT_PREVIEW_LENGTH + 20))
+
+    expect(preview).toHaveLength(SYSTEM_PROMPT_PREVIEW_LENGTH + 1)
+    expect(preview.endsWith('…')).toBe(true)
   })
 })

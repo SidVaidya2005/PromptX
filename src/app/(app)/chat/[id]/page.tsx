@@ -60,6 +60,7 @@ export default async function ConversationPage({ params }: ConversationPageProps
       configuredProviders={keys.map((key) => key.provider)}
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
       sharedKeyAvailable={sharedKeyAvailable}
+      systemPrompt={conversation.system_prompt}
     />
   )
 }

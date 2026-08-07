@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 
 import { ModelPicker } from '@/components/chat/ModelPicker'
 import { QuotaMeter } from '@/components/chat/QuotaMeter'
+import { SystemPromptControl } from '@/components/chat/SystemPromptControl'
 import { Button } from '@/components/ui/button'
 
 import type { Provider } from '@/types/domain'
@@ -24,9 +25,14 @@ type ComposerProps = {
   /** False while the global monthly ceiling is spent. Also irrelevant to a BYOK model. */
   sharedKeyAvailable: boolean
   isStreaming: boolean
+  /** The conversation's standing instruction. Null is "the provider's default". */
+  systemPrompt: string | null
+  /** Surfaced inside the system prompt dialog; the mutation is owned by Chat. */
+  systemPromptError: string | null
   onSend: (text: string) => void
   onStop: () => void
   onSelectModel: (provider: Provider, modelId: string) => void
+  onSaveSystemPrompt: (systemPrompt: string | null) => Promise<boolean>
 }
 
 /**
@@ -44,9 +50,12 @@ export function Composer({
   remaining,
   sharedKeyAvailable,
   isStreaming,
+  systemPrompt,
+  systemPromptError,
   onSend,
   onStop,
   onSelectModel,
+  onSaveSystemPrompt,
 }: ComposerProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -172,7 +181,13 @@ export function Composer({
         {/* DESIGN.md `composer-toolbar`: model picker, attach button, quota
             meter, send. Feature 28 fills the remaining gap. */}
         <div className="flex items-center justify-between gap-sm pt-xs">
-          <div className="flex min-w-0 items-center gap-sm">
+          {/* Wraps, and F23 is why. With the model picker alone the quota meter
+              had room to sit beside it at 360px; adding the system prompt
+              control squeezed it to 58px, where "16 of 20 free messages left
+              today" rendered as four lines in a column — measured, not
+              predicted. Wrapping lets the meter drop to its own line at narrow
+              widths and changes nothing at desktop, where all three fit. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xs">
             <ModelPicker
               provider={provider}
               modelId={modelId}
@@ -181,6 +196,17 @@ export function Composer({
               // and offering it would imply otherwise.
               disabled={isStreaming}
               onSelect={onSelectModel}
+            />
+
+            {/* Beside the picker because it answers the same question: what the
+                NEXT message will do. Disabled mid-stream for the same reason —
+                editing it cannot affect the request already in flight, and
+                offering it would imply otherwise. */}
+            <SystemPromptControl
+              systemPrompt={systemPrompt}
+              disabled={isStreaming}
+              onSave={onSaveSystemPrompt}
+              error={systemPromptError}
             />
 
             {/* Only while the shared key would answer. A user on their own key

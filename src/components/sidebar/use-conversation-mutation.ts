@@ -32,7 +32,11 @@ export function useConversationMutation() {
 
   async function patch(
     conversationId: string,
-    body: { title: string } | { pinned: boolean } | { archived: boolean },
+    body:
+      | { title: string }
+      | { pinned: boolean }
+      | { archived: boolean }
+      | { systemPrompt: string | null },
     networkError: string,
   ): Promise<boolean> {
     setIsPending(true)
@@ -104,5 +108,25 @@ export function useConversationMutation() {
     )
   }
 
-  return { rename, setPinned, setArchived, isPending, error }
+  /**
+   * Sets the conversation's standing instruction, or clears it with null. (F23)
+   *
+   * Called from the composer rather than a sidebar row, which makes this hook's
+   * home under `components/sidebar/` a little wrong now — it is a conversation
+   * mutation, not a sidebar one. Left where it is on purpose: moving a file
+   * three features have written into is a rename worth doing on its own, not
+   * folded into a feature that would then be unreviewable.
+   */
+  async function setSystemPrompt(
+    conversationId: string,
+    systemPrompt: string | null,
+  ): Promise<boolean> {
+    return patch(
+      conversationId,
+      { systemPrompt },
+      'Network error. The system prompt was not saved — please try again.',
+    )
+  }
+
+  return { rename, setPinned, setArchived, setSystemPrompt, isPending, error }
 }

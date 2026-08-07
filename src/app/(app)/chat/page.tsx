@@ -41,6 +41,10 @@ export default async function ChatPage() {
       configuredProviders={keys.map((key) => key.provider)}
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
       sharedKeyAvailable={sharedKeyAvailable}
+      // No row yet, so nothing to seed from. A prompt set here is local state
+      // that rides along in the first request and is written by
+      // createConversation() — the same arrangement the model has. (F23)
+      systemPrompt={null}
       emptyState={
         <div className="flex h-full items-center justify-center p-3xl">
           {/* Offering the daily allowance while the breaker is tripped puts a
