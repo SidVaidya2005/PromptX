@@ -32,7 +32,7 @@ export function useConversationMutation() {
 
   async function patch(
     conversationId: string,
-    body: { title: string } | { pinned: boolean },
+    body: { title: string } | { pinned: boolean } | { archived: boolean },
     networkError: string,
   ): Promise<boolean> {
     setIsPending(true)
@@ -86,5 +86,23 @@ export function useConversationMutation() {
     )
   }
 
-  return { rename, setPinned, isPending, error }
+  /**
+   * Puts the conversation away, or takes it back out. (F22)
+   *
+   * The `router.refresh()` inside `patch` is what makes the row leave the
+   * sidebar, and it is also the only thing that happens: archiving deliberately
+   * does not navigate, unlike delete. The thread stays readable at its own URL,
+   * so there is nothing broken to move away from.
+   */
+  async function setArchived(conversationId: string, archived: boolean): Promise<boolean> {
+    return patch(
+      conversationId,
+      { archived },
+      archived
+        ? 'Network error. The conversation was not archived — please try again.'
+        : 'Network error. The conversation was not unarchived — please try again.',
+    )
+  }
+
+  return { rename, setPinned, setArchived, isPending, error }
 }

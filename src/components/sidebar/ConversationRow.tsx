@@ -38,6 +38,12 @@ type ConversationRowProps = {
   relativeTime: string
   /** Non-null means pinned. The value is not read here — only its nullness. (F21) */
   pinnedAt: string | null
+  /**
+   * Non-null means archived. A row only reaches this component archived when
+   * the sidebar was asked to reveal them, so this decides the muted treatment
+   * and the menu's wording, never whether to render at all. (F22)
+   */
+  archivedAt: string | null
 }
 
 /**
@@ -108,10 +114,12 @@ export function ConversationRow({
   updatedAt,
   relativeTime,
   pinnedAt,
+  archivedAt,
 }: ConversationRowProps) {
   const router = useRouter()
   const isActive = usePathname() === `/chat/${id}`
   const isPinned = pinnedAt !== null
+  const isArchived = archivedAt !== null
 
   const [confirming, setConfirming] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -146,7 +154,12 @@ export function ConversationRow({
    */
   const startingRenameRef = useRef(false)
 
-  const { rename, setPinned, error: mutationError } = useConversationMutation()
+  const {
+    rename,
+    setPinned,
+    setArchived,
+    error: mutationError,
+  } = useConversationMutation()
 
   /**
    * Escape cancels the rename, and this is why it is a window listener rather
@@ -218,6 +231,18 @@ export function ConversationRow({
   async function handlePin(next: boolean) {
     setError(null)
     await setPinned(id, next)
+  }
+
+  /**
+   * No navigation, deliberately, and this is where archive and delete part
+   * company. Delete `router.replace('/chat')`s because the URL it leaves behind
+   * would 404; an archived conversation is untouched and still reads perfectly
+   * at its own address, so leaving it on screen is the honest behaviour. The
+   * row simply leaves the sidebar under the reader. (F22)
+   */
+  async function handleArchive(next: boolean) {
+    setError(null)
+    await setArchived(id, next)
   }
 
   async function handleDelete() {
@@ -325,6 +350,12 @@ export function ConversationRow({
               'min-w-0 flex-1 truncate py-sm after:absolute after:inset-0',
               // The pin glyph brings the leading gutter with it when it is there.
               isPinned ? 'pl-0' : 'pl-md',
+              // Muted with the existing token rather than a new one — DESIGN.md
+              // has no "archived row" treatment and this feature does not get to
+              // invent a visual value. Only while the row is not the open
+              // conversation: an archived thread being read is still the thing
+              // on screen, and dimming it there would be misleading.
+              isArchived && !isActive && 'text-mute',
             )}
           >
             {title}
@@ -399,6 +430,12 @@ export function ConversationRow({
                   this click means. */}
               <DropdownMenuItem onSelect={() => void handlePin(!isPinned)}>
                 {isPinned ? 'Unpin' : 'Pin'}
+              </DropdownMenuItem>
+
+              {/* Not destructive, so no confirmation — the row is one click
+                  from coming back, and the thread never went anywhere. */}
+              <DropdownMenuItem onSelect={() => void handleArchive(!isArchived)}>
+                {isArchived ? 'Unarchive' : 'Archive'}
               </DropdownMenuItem>
 
               <DropdownMenuItem variant="danger" onSelect={() => setConfirming(true)}>
