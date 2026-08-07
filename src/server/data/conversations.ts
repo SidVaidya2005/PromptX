@@ -18,18 +18,25 @@ import type { Conversation, ConversationSummary, Provider } from '@/types/domain
  * reads straight off the index. `nullsFirst: false` is what makes the unpinned
  * rows sort after the pinned ones rather than before them.
  *
- * Archived rows are excluded outright rather than behind a flag. Feature 22 is
- * where "show archived" is specified, and it can add the parameter then.
+ * `includeArchived` defaults to false, so hiding archived rows is what happens
+ * when nobody says otherwise — the flag can only ever widen the result, never
+ * narrow it. It is a filter and not a second ordering: revealed rows come back
+ * interleaved by pin and recency exactly as they were, and `groupConversations`
+ * is what files them under Archived. The index carries no partial predicate, so
+ * both shapes of this query read off the same one. (F22)
  */
-export async function listConversations(): Promise<ConversationSummary[]> {
+export async function listConversations(
+  includeArchived = false,
+): Promise<ConversationSummary[]> {
   const supabase = await createServerSupabaseClient()
 
-  const { data, error } = await supabase
+  const query = supabase
     .from('conversations')
-    .select('id, title, pinned_at, updated_at')
-    .is('archived_at', null)
+    .select('id, title, pinned_at, archived_at, updated_at')
     .order('pinned_at', { ascending: false, nullsFirst: false })
     .order('updated_at', { ascending: false })
+
+  const { data, error } = await (includeArchived ? query : query.is('archived_at', null))
 
   if (error) {
     console.error('[data/conversations] listConversations failed', error)
@@ -251,6 +258,46 @@ export async function setConversationPinned(
   if (error) {
     console.error('[data/conversations] setConversationPinned failed', error)
     throw new Error('Failed to change the pin')
+  }
+
+  return data !== null
+}
+
+/**
+ * Puts a conversation away, or takes it back out. (F22)
+ *
+ * The narrowest write in the file: one nullable timestamp, and nothing else
+ * about the conversation changes. **`pinned_at` in particular is left alone**,
+ * which is what lets unarchiving restore a row to the Pinned group rather than
+ * dropping it into recency — `groupConversations` resolves the overlap by
+ * checking Archived first, so a row that is both has a group without either
+ * column having to yield.
+ *
+ * `updated_at` is untouched for the third time in two features, and here the
+ * reason is sharper than usual: archiving is the user saying they are *done*
+ * with a conversation, so floating it to the top of the ordering would be the
+ * precise opposite of what they asked for. It matters even while the row is
+ * hidden, because unarchiving has to put it back where it was.
+ *
+ * Desired state rather than a toggle, and returns whether a row changed, both
+ * for the reasons `setConversationPinned` records.
+ */
+export async function setConversationArchived(
+  id: string,
+  archived: boolean,
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] setConversationArchived failed', error)
+    throw new Error('Failed to archive conversation')
   }
 
   return data !== null

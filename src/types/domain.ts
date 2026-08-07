@@ -34,7 +34,7 @@ export type Message = Tables<'messages'>
  */
 export type ConversationSummary = Pick<
   Conversation,
-  'id' | 'title' | 'pinned_at' | 'updated_at'
+  'id' | 'title' | 'pinned_at' | 'archived_at' | 'updated_at'
 >
 
 /** A recency bucket in the sidebar. Empty buckets are never constructed. */
@@ -43,7 +43,17 @@ export type ConversationGroup = {
   conversations: readonly ConversationSummary[]
 }
 
-export type ConversationGroupLabel = 'Pinned' | 'Today' | 'Previous 7 days' | 'Older'
+/**
+ * `Pinned` and `Archived` are the two that are not about recency at all, and
+ * they sit at opposite ends for that reason — lifted out of the ordering, or put
+ * away below it. (F22)
+ */
+export type ConversationGroupLabel =
+  | 'Pinned'
+  | 'Today'
+  | 'Previous 7 days'
+  | 'Older'
+  | 'Archived'
 
 /**
  * What the settings page may know about a stored key.

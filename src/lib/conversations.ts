@@ -57,11 +57,14 @@ export function groupConversations(
 ): ConversationGroup[] {
   const today = utcDayNumber(now)
 
+  // Insertion order is render order. Archived is last because it is the one
+  // group the reader has said they are done with. (F22)
   const buckets = new Map<ConversationGroupLabel, ConversationSummary[]>([
     ['Pinned', []],
     ['Today', []],
     ['Previous 7 days', []],
     ['Older', []],
+    ['Archived', []],
   ])
 
   for (const conversation of conversations) {
@@ -108,8 +111,16 @@ function labelFor(
   conversation: ConversationSummary,
   today: number,
 ): ConversationGroupLabel {
-  // Pinned is exclusive and checked first: a pinned conversation updated this
-  // morning belongs under Pinned only, never in two places at once.
+  // Archived is checked before Pinned, and the order is the decision rather
+  // than an accident of writing. Archiving does not clear `pinned_at` — so
+  // unarchiving can put the row back exactly where it was — which means a row
+  // can be both, and only one of them can be its group. Put away wins over
+  // lifted up: a conversation the user has filed away should not reappear at
+  // the top of the sidebar the moment archived rows are revealed. (F22)
+  if (conversation.archived_at !== null) return 'Archived'
+
+  // Pinned is exclusive too: a pinned conversation updated this morning belongs
+  // under Pinned only, never in two places at once.
   if (conversation.pinned_at !== null) return 'Pinned'
 
   const days = today - utcDayNumber(new Date(conversation.updated_at))

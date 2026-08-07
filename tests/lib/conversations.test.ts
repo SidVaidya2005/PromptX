@@ -17,6 +17,7 @@ function conversation(
   return {
     title: 'A conversation',
     pinned_at: null,
+    archived_at: null,
     updated_at: NOW.toISOString(),
     ...overrides,
   }
@@ -126,6 +127,70 @@ describe('groupConversations', () => {
     )
 
     expect(labelsOf(groups)).toEqual(['Pinned', 'Today', 'Previous 7 days', 'Older'])
+  })
+
+  /**
+   * Archived is the second exclusive group, and the two can collide. (F22)
+   *
+   * Archiving deliberately leaves `pinned_at` alone — that is what lets
+   * unarchiving put a row back where it was — so a row that is both exists by
+   * design rather than by accident, and `labelFor` has to decide. Put away wins
+   * over lifted up: a conversation the user filed should not reappear at the top
+   * of the sidebar the moment archived rows are revealed.
+   */
+  it('files an archived conversation under Archived and nowhere else', () => {
+    const groups = groupConversations(
+      [
+        conversation({
+          id: 'archived-today',
+          archived_at: '2026-07-30T09:00:00Z',
+          updated_at: '2026-08-01T09:00:00Z',
+        }),
+      ],
+      NOW,
+    )
+
+    expect(labelsOf(groups)).toEqual(['Archived'])
+    expect(idsIn(groups, 'Today')).toEqual([])
+  })
+
+  it('files an archived conversation that is also pinned under Archived, not Pinned', () => {
+    // Verified by mutation: moving the pinned_at check above the archived_at
+    // check in labelFor turns exactly this red.
+    const groups = groupConversations(
+      [
+        conversation({
+          id: 'both',
+          pinned_at: '2026-01-01T00:00:00Z',
+          archived_at: '2026-07-30T09:00:00Z',
+        }),
+      ],
+      NOW,
+    )
+
+    expect(labelsOf(groups)).toEqual(['Archived'])
+    expect(idsIn(groups, 'Pinned')).toEqual([])
+  })
+
+  it('renders Archived last, after Older', () => {
+    const groups = groupConversations(
+      [
+        conversation({ id: 'archived', archived_at: '2026-07-30T00:00:00Z' }),
+        conversation({ id: 'ancient', updated_at: '2024-02-02T00:00:00Z' }),
+        conversation({ id: 'today', updated_at: '2026-08-01T01:00:00Z' }),
+        conversation({ id: 'pinned', pinned_at: '2026-01-01T00:00:00Z' }),
+        conversation({ id: 'recent', updated_at: '2026-07-29T00:00:00Z' }),
+      ],
+      NOW,
+    )
+
+    expect(labelsOf(groups)).toEqual([
+      'Pinned',
+      'Today',
+      'Previous 7 days',
+      'Older',
+      'Archived',
+    ])
   })
 
   it('treats a future timestamp as today rather than dropping the row', () => {
