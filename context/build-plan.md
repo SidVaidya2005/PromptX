@@ -475,8 +475,19 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 **Logic:**
 
 - `renameConversation()` capped at `MAX_TITLE_LENGTH`
-- `togglePin()` setting or clearing `pinned_at`
+- `setConversationPinned(id, pinned)` setting or clearing `pinned_at` — desired state, not a toggle, so a retry or a double-click cannot undo itself. The plan said `togglePin()`; the rename is the decision below
 - A manual rename permanently suppresses auto-titling for that conversation
+
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **No migration, and two thirds of the "logic" was already there.** `pinned_at` and `conversations_sidebar_idx` shipped in F02; `listConversations()` already orders `pinned_at desc nulls last`, and `groupConversations()` already files a pinned row into the Pinned bucket exclusively. Auto-title suppression is **inherited, not written** — `setGeneratedTitle()` gates on `.eq('title', DEFAULT_CONVERSATION_TITLE)`, so a renamed conversation is skipped without a column recording that a human named it. F21's job there was to pin it with a test, and it got one that goes red when the `.eq()` is removed
+- **The PATCH body became a union of three `.strict()` branches** — model, rename, pin — the shape F20 gave `chatRequestSchema`, for the same reason: `z.union` tries members in order and an ordinary zod object *strips* undeclared keys, so a body carrying both `title` and `pinned` would match the first branch and be answered as a rename that never happened. Proven by mutation: dropping `.strict()` from the model branch turns exactly that test red. F22's archive slots in as a fourth branch
+- **`.trim()` is declared before `.min(1)`, and the order is the guard.** Measured on the installed zod 4.4.3 rather than assumed: checks run in declaration order, so trim-first rejects `'   '` while trim-last accepts it and stores `''` — a conversation with no name and nothing to say why. The mutation swapping them turns two tests red together
+- **Neither rename nor pin writes `updated_at`**, the F15 argument applied twice. The sidebar orders on *activity*, and naming something is not activity; for pin it bites harder, because a touch would reorder the row inside the Pinned group for a click that produced no message. Verified in the database on every browser check, not inferred
+- **The rename input is focused from Radix's `onCloseAutoFocus`, not an effect.** The obvious version was written first and measured not to work: the input mounts while the menu is still open, and the trapped FocusScope pulls focus straight back out — the input rendered correctly with `document.activeElement` on `BODY`
+- **Escape is a `window` capture listener, because the drawer eats it otherwise.** Radix dismisses a Sheet from `document.addEventListener('keydown', …, { capture: true })` — read out of the installed package — which runs before React's root listener, so `stopPropagation()` in a React handler is already too late. The first version did exactly that and cancelling a rename at 360px closed the whole sidebar with it. `window` is one step above `document` in the capture path
+- **A cancelled rename left a flag set that silently ate the *next* rename's blur commit.** React fires no blur for an element it unmounts, so the `cancelledRef` that Escape sets was never cleared, and the following rename on that row kept its typed title on screen while the database never heard about it. Found in the browser, not by reading. The flag is now cleared where the rename *starts*
+- **The pin indicator is a leading glyph, not DESIGN.md's `status-chip`.** The chip's fill is `canvas-soft` and so is the row's hover and active fill, so a "Pinned" chip would vanish exactly when the row is being used. It is `aria-hidden`: the enclosing `<ul aria-label="Pinned">` already tells a screen reader which group the row is in
 
 ### 22 Archive
 

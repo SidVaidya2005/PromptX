@@ -40,6 +40,94 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 3 — Conversation craft
 
+### 21 Rename and pin — 2026-08-07
+
+Rename and Pin/Unpin in the sidebar overflow menu, both reaching the database
+through the existing `PATCH /api/conversations/[id]`. Rename swaps the row's
+title for an inline input — Enter commits, Escape cancels, blur commits. Pin
+sets `pinned_at`, which moves the row into the Pinned group and marks it with a
+leading glyph; Unpin clears it and the row falls back into its recency group.
+
+**Most of the "logic" in the plan already existed, and finding that out was the
+first hour of the feature.** `pinned_at` and `conversations_sidebar_idx` shipped
+in the F02 migration, so **no migration was needed**. `listConversations()`
+already ordered `pinned_at desc nulls last, updated_at desc` and
+`groupConversations()` already filed a pinned row into the `Pinned` bucket,
+exclusively and first. And "a manual rename permanently suppresses auto-titling"
+turned out to be **inherited rather than implemented**: `setGeneratedTitle()`
+gates on `.eq('title', DEFAULT_CONVERSATION_TITLE)`, so a renamed conversation is
+skipped without any column recording that a human named it. That makes the
+`.eq()` the most deletable line in the feature — it reads as redundant with the
+caller's own check — so it got the test that fails when it goes.
+
+**The PATCH body became a union of three `.strict()` branches**, the shape F20
+gave `chatRequestSchema`, for the identical reason: `z.union` tries members in
+order and an ordinary zod object *strips* undeclared keys, so a body carrying
+both `title` and `pinned` would match the first branch and be answered as a
+rename that never happened. F22's archive is a fourth branch.
+
+**`.trim()` before `.min(1)` is a guard, and the ordering was measured on the
+installed zod 4.4.3** rather than taken from the docs — Context7 was unavailable,
+so the check ran directly: trim-first rejects `'   '`, trim-last accepts it and
+outputs `''`. A conversation named the empty string has nothing on screen and
+nothing to explain why.
+
+**Neither write touches `updated_at`**, the F15 argument applied twice. It bites
+harder for pin than for rename: a touch would reorder the row *inside* the Pinned
+group for a click that produced no message.
+
+**Three defects were found only in the browser, all inside one `<input>`, and
+none was visible to typecheck, lint, or the suite.** Each fix came from reading
+the installed package rather than reasoning about the behaviour:
+
+- **Focusing from an effect loses to Radix's FocusScope.** The input mounts while
+  the menu is still open and the scope is trapped, so it pulled focus straight
+  back out — the input rendered with the right value while `document.activeElement`
+  was `BODY`. The focus moved into `onCloseAutoFocus`, which is the first moment
+  it can stick, with `preventDefault()` stopping Radix returning focus to the
+  trigger.
+- **Escape reached Radix before React did.** A Sheet dismisses from
+  `document.addEventListener('keydown', …, { capture: true })` — read out of
+  `@radix-ui/react-use-escape-keydown` — and document capture runs before the
+  root listener React attaches, so `stopPropagation()` inside a React handler is
+  already too late. The first version did exactly that, and cancelling a rename
+  at 360px closed the entire sidebar. The handler moved to a `window` capture
+  listener, one step above `document` in the capture path, with
+  `stopImmediatePropagation()`.
+- **A cancelled rename ate the next rename's blur commit.** Escape sets a
+  `cancelledRef` so the blur that follows cannot commit what was just cancelled —
+  but **React fires no blur for an element it unmounts**, so the flag was never
+  cleared and stayed true. The following rename on that row typed a new title,
+  blurred, and the handler discarded it: the input kept the text on screen and
+  the database never heard about it. The flag is now cleared where the rename
+  *starts*.
+
+**A fourth thing looked like a regression and was not.** Playwright cannot click
+the overflow trigger without hovering the row first, because F11 hides it on fine
+pointers until hover. Since this feature restructured the `<li>`, that was worth
+disproving rather than assuming: checking out the pre-F21 row and cold-clicking
+it produced the same failure, so the behaviour is F11's design and not something
+F21 introduced. (An earlier attempt to time-box that comparison with `timeout`
+silently proved nothing — the command does not exist on macOS.)
+
+**Verified.** 254 tests (17 new), `pnpm typecheck`, `pnpm lint` and `pnpm build`
+all green. Four mutations, each turning red exactly what it should and nothing
+else: `.strict()` off the model branch (the mixed-intent test), `.trim()` moved
+after `.max()` (the whitespace and padded-title tests together), `updated_at:
+now()` added to the rename (the sidebar-ordering test), and the
+`.eq('title', …)` guard removed from `setGeneratedTitle` (the inherited
+suppression test, leaving its sibling green). In a browser against the real
+project, **every check read back from the database rather than the screen**:
+Enter commits and persists; Escape writes nothing; a whitespace-only title writes
+nothing; blur commits, including directly after an Escape; pin moves the row into
+`Pinned` with one glyph and leaves the other row where it was; Unpin returns it
+to its recency group; `updated_at` came back byte-identical after every one. At
+360px with `pointer: coarse` the drawer row measured exactly 44px, the trigger
+was visible and won its own hit test with no hover, the whole rename flow worked
+inside the drawer, Escape cancelled without dismissing it, and
+`document.querySelectorAll('[id]')` found no duplicates across the two sidebar
+copies. Console clean.
+
 ### 20 Regenerate — 2026-08-07
 
 A regenerate control on the last assistant message, including one that failed or
