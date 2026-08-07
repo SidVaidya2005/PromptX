@@ -499,9 +499,17 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **Logic:**
 
-- `toggleArchive()` setting or clearing `archived_at`
+- `setConversationArchived(id, archived)` setting or clearing `archived_at` — desired state, not a toggle, for the reason F21 settled. The plan said `toggleArchive()`
 - `listConversations()` takes an `includeArchived` flag, defaulting to false
 - Archived conversations remain fully readable and searchable
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **A fourth `.strict()` branch on `updateConversationSchema`**, which F21 built the union expecting. `{archived: boolean}` sits beside model, rename and pin, and the route narrows with `'archived' in`
+- **"Show archived" is a cookie**, per the F05 constraint that shell layout state is a cookie and never `localStorage` — `(app)/layout.tsx` reads it during the server render and passes the flag into `listConversations()`, so the right list is in the first byte. It is the first cookie here whose write **must** be followed by `router.refresh()`: collapse state is mirrored in React state, so its server re-render is cosmetic, while this one decides a *query*
+- **`Archived` is exclusive and checked before `Pinned` in `labelFor()`, and renders last.** Archiving does not clear `pinned_at`, so unarchiving restores a pinned row to `Pinned` exactly as it was — which is what "restores it to its recency group" has to mean for a row that had been lifted out of recency
+- **Archiving the conversation on screen leaves you on it.** Unlike delete, which `router.replace('/chat')`s because the URL would 404, an archived thread is still valid and still readable; navigating away would discard something that still works
+- **No new UI primitive and no migration.** The toggle is a `Button` with `aria-pressed` rather than a shadcn Switch, per the Dependencies gate; `archived_at` shipped in F02 and `conversations_sidebar_idx` carries no partial predicate, so the archived-inclusive query reads off the same index the default one does
 
 ### 23 Per-conversation system prompt
 

@@ -40,6 +40,77 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 3 — Conversation craft
 
+### 22 Archive — 2026-08-07
+
+Archive and Unarchive in the sidebar overflow menu, a "Show archived" toggle in
+the sidebar footer, and archived rows rendered muted in their own `Archived`
+group at the bottom of the list. Archiving hides a conversation from the default
+sidebar query and does nothing else to it.
+
+**The feature was mostly assembly, and that is the honest summary.** `archived_at`
+shipped in F02, the PATCH union was built at F21 expecting a fourth branch,
+`setConversationArchived` is `setConversationPinned` with a different column, and
+the hosted test file is the F21 one with different assertions. No migration and
+no new dependency — `conversations_sidebar_idx` carries no partial predicate, so
+the archived-inclusive query reads off the same index, and the footer toggle is a
+`Button` with `aria-pressed` rather than a shadcn Switch.
+
+**`Archived` is checked before `Pinned` in `labelFor()`, and the ordering is a
+decision rather than an accident.** Archiving deliberately leaves `pinned_at`
+alone — that is what lets unarchiving restore a row to Pinned rather than
+dropping it into recency — so a row that is both exists by design, and only one
+of the two can be its group. Put away beats lifted up: a conversation the user
+filed should not reappear at the top of the sidebar the moment archived rows are
+revealed. Verified in the browser with the archived-then-unarchived row coming
+back with a byte-identical `pinned_at`.
+
+**The interesting thing this feature found is about reusing a mechanism.** F05
+established that shell layout state is a cookie: read by the Server Component,
+written with one line of `document.cookie`, no route handler — and, unremarked,
+**no `router.refresh()`**, because the collapse state is also held in React state
+so the server re-render is cosmetic. "Show archived" reuses all of that and
+breaks on the one property that was incidental: this cookie is an input to
+`listConversations(includeArchived)`, so without a refresh the button flips, the
+cookie changes, and the list underneath keeps answering the previous question.
+It also forced the `(app)` layout to `await cookies()` *before* starting the
+conversation query rather than beside it — the query cannot be issued until it
+knows what to ask for. That costs nothing (`cookies()` reads the request, not the
+network) and the two database round trips still overlap, but it does rearrange
+code that carried a comment explaining why it was arranged the other way, so the
+comment was rewritten rather than left to mislead.
+
+**One F21 test failed correctly on the way through.** "rejects a body that is
+none of the three" used `{archived: true}` as its example of an intent the union
+did not carry — which F22 turned into a valid body. It was rewritten around
+`{starred: true}` and renamed. A test whose fixture is "a thing we do not support
+yet" has an expiry date built into it, and this one reached it exactly when it
+should have.
+
+**A smaller call worth recording:** an archived row is muted with `text-mute`
+*except* when it is the conversation currently open. DESIGN.md has no archived-row
+treatment and this feature does not get to invent a visual value, but dimming the
+thread you are actually reading would be actively misleading. Archiving also gets
+no confirmation dialog, unlike delete — the row is one click from returning and
+nothing was destroyed.
+
+**Verified.** 265 tests (11 new), `pnpm typecheck`, `pnpm lint` and `pnpm build`
+all green. Four mutations, each turning red exactly one test: swapping the
+`archived_at` and `pinned_at` checks in `labelFor` (the both-columns test),
+removing `.strict()` from the archive branch (the mixed-intent test), adding
+`updated_at: now()` to the archive write (the ordering test), and making
+`listConversations` ignore its flag (the widen-never-narrow test). In a browser
+against the real project, every check read back from the database: archiving from
+the row left the URL, the thread and `pinned_at` untouched while the row left the
+sidebar; the toggle revealed it under `Archived`, rendered last, in `text-mute`
+against the live row's `text-body-strong`; the preference survived a full reload;
+unarchiving returned it to `Pinned` with the original timestamp. At 360px with
+`pointer: coarse` the toggle and the row both measured exactly 44px, archive and
+unarchive worked inside the drawer, and `document.querySelectorAll('[id]')` found
+no duplicates across the two sidebar copies. `updated_at` was byte-identical on
+both fixtures from the first read to the last, and both were restored to their
+original state at the end. Console clean apart from a pre-existing missing
+favicon.
+
 ### 21 Rename and pin — 2026-08-07
 
 Rename and Pin/Unpin in the sidebar overflow menu, both reaching the database
