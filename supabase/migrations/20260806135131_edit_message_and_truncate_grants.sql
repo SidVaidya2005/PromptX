@@ -6,7 +6,7 @@
 -- way — the owner policies on `messages` are `to authenticated`, so an anon
 -- caller matches no row and the function returns null — but "it happens to be
 -- harmless" is a worse guarantee than "it is not callable", and the quota
--- functions in 20260805120000_shared_key_quota.sql already set the precedent:
+-- functions in 20260805062649_shared_key_quota.sql already set the precedent:
 -- revoke from public, grant to the one role that needs it.
 --
 -- A separate migration rather than an edit to the one before it, because that

@@ -7,7 +7,7 @@
 -- then misrepresent itself, which is worse than either half failing outright.
 --
 -- `security invoker`, like the quota functions in
--- 20260805120000_shared_key_quota.sql and unlike `handle_new_user()`. It runs
+-- 20260805062649_shared_key_quota.sql and unlike `handle_new_user()`. It runs
 -- under the caller's session, so the owner policies on `messages` are what stop
 -- one user editing another's prompt. There is no elevation here and none is
 -- needed: every row this touches is already reachable by the caller.

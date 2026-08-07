@@ -1,5 +1,5 @@
 -- The global half of the shared-key cap, and the second of the two independent
--- axes architecture.md requires. 20260805120000_shared_key_quota.sql caps what
+-- axes architecture.md requires. 20260805062649_shared_key_quota.sql caps what
 -- one user may send in a day; nothing until now caps what everyone costs in a
 -- month, and the key is billed to a real card.
 --
@@ -53,7 +53,7 @@ comment on function public.is_shared_key_available() is
 -- lock and evaluates the arithmetic against that, so two concurrent
 -- completions cannot both add to the same stale total. Reading the totals into
 -- variables first and writing them back would reopen exactly the lost-update
--- window 20260805120000_shared_key_quota.sql was written to close.
+-- window 20260805062649_shared_key_quota.sql was written to close.
 --
 -- estimated_usd cannot be computed in that same statement, because SET cannot
 -- reference another column's NEW value. So statement one RETURNS the new
