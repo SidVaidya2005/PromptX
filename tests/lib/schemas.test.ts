@@ -178,23 +178,26 @@ describe('chatRequestSchema — send or regenerate', () => {
 
 /**
  * Feature 21 turned the conversation PATCH body into a union, and the union is
- * what these are about.
+ * what these are about. F22 added the fourth branch.
  *
- * One endpoint now carries three unrelated intents — change the model, rename,
- * pin — and the only thing that distinguishes them is the shape of the body. So
- * the interesting failures are not "a bad title is accepted"; they are a body
- * that means two things being quietly answered as one of them.
+ * One endpoint carries four unrelated intents — change the model, rename, pin,
+ * archive — and the only thing that distinguishes them is the shape of the
+ * body. So the interesting failures are not "a bad title is accepted"; they are
+ * a body that means two things being quietly answered as one of them.
  */
 describe('updateConversationSchema', () => {
   const model = { provider: 'google' as const, modelId: 'gemini-3.6-flash' }
 
-  it('accepts each of the three intents on its own', () => {
+  it('accepts each intent on its own', () => {
     expect(updateConversationSchema.safeParse(model).success).toBe(true)
     expect(updateConversationSchema.safeParse({ title: 'Rent contract' }).success).toBe(
       true,
     )
     expect(updateConversationSchema.safeParse({ pinned: true }).success).toBe(true)
     expect(updateConversationSchema.safeParse({ pinned: false }).success).toBe(true)
+    // F22's fourth branch, which the union was built expecting.
+    expect(updateConversationSchema.safeParse({ archived: true }).success).toBe(true)
+    expect(updateConversationSchema.safeParse({ archived: false }).success).toBe(true)
   })
 
   /**
@@ -219,6 +222,14 @@ describe('updateConversationSchema', () => {
     expect(updateConversationSchema.safeParse({ ...model, pinned: true }).success).toBe(
       false,
     )
+    // The pairing that would be easiest to send by accident: a menu that
+    // archived and unpinned in one request would look entirely reasonable.
+    expect(
+      updateConversationSchema.safeParse({ archived: true, pinned: false }).success,
+    ).toBe(false)
+    expect(
+      updateConversationSchema.safeParse({ archived: true, title: 'Both' }).success,
+    ).toBe(false)
   })
 
   it('rejects an unknown key rather than quietly discarding it', () => {
@@ -230,9 +241,12 @@ describe('updateConversationSchema', () => {
     )
   })
 
-  it('rejects a body that is none of the three', () => {
+  it('rejects a body that is none of the four', () => {
     expect(updateConversationSchema.safeParse({}).success).toBe(false)
-    expect(updateConversationSchema.safeParse({ archived: true }).success).toBe(false)
+    // `archived` stood here until F22 turned it into a real branch, which is
+    // the point of the assertion: an intent the union does not carry yet is
+    // refused rather than quietly accepted and dropped.
+    expect(updateConversationSchema.safeParse({ starred: true }).success).toBe(false)
   })
 
   /**
@@ -265,6 +279,13 @@ describe('updateConversationSchema', () => {
       updateConversationSchema.safeParse({ title: 'a'.repeat(MAX_TITLE_LENGTH + 1) })
         .success,
     ).toBe(false)
+  })
+
+  it('rejects an archive flag that is not a boolean', () => {
+    // Desired state, so it has to be one of exactly two things. A string
+    // 'false' is truthy and would archive a conversation nobody asked to hide.
+    expect(updateConversationSchema.safeParse({ archived: 'false' }).success).toBe(false)
+    expect(updateConversationSchema.safeParse({ archived: null }).success).toBe(false)
   })
 
   it('rejects a pin that is not a boolean', () => {

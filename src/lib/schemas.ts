@@ -204,6 +204,20 @@ export const conversationPinSchema = z
   .strict()
 
 /**
+ * Putting a conversation away, or taking it back out. (F22)
+ *
+ * Desired state for the same reason the pin is. Note what this schema does
+ * *not* carry: archiving is only ever "hide this from the default sidebar", so
+ * there is nothing here about the pin, the title, or the messages — an archived
+ * conversation is unchanged in every respect except which query returns it.
+ */
+export const conversationArchiveSchema = z
+  .object({
+    archived: z.boolean(),
+  })
+  .strict()
+
+/**
  * The body of `PATCH /api/conversations/[id]` — one intent at a time.
  *
  * **Every branch is `.strict()`, for the reason `chatRequestSchema` records.**
@@ -211,15 +225,16 @@ export const conversationPinSchema = z
  * does not declare, so a body carrying both `title` and `pinned` would match the
  * rename branch, lose the pin on the floor, and be answered as though only a
  * rename had been asked for. Strict makes that body match nothing and fail
- * loudly. Feature 22's archive slots in as a fourth branch.
+ * loudly. Feature 22's archive arrived as the fourth branch, as expected.
  *
- * The route narrows with `'title' in parsed.data` / `'pinned' in parsed.data`,
- * which TypeScript resolves without an assertion.
+ * The route narrows with `'title' in parsed.data` and so on, which TypeScript
+ * resolves without an assertion.
  */
 export const updateConversationSchema = z.union([
   updateConversationModelSchema,
   conversationRenameSchema,
   conversationPinSchema,
+  conversationArchiveSchema,
 ])
 
 export type UpdateConversationInput = z.infer<typeof updateConversationSchema>

@@ -9,6 +9,7 @@ import { getUser } from '@/server/auth'
 import {
   deleteConversation,
   renameConversation,
+  setConversationArchived,
   setConversationPinned,
   updateConversationModel,
 } from '@/server/data/conversations'
@@ -157,6 +158,26 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       console.error('[api/conversations] pin change failed', error)
       return NextResponse.json(
         { error: 'Could not change the pin', code: 'internal_error' },
+        { status: 500 },
+      )
+    }
+  }
+
+  if ('archived' in body) {
+    const { archived } = body
+
+    try {
+      const changed = await setConversationArchived(parsedId.data, archived)
+
+      if (!changed) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({ archived })
+    } catch (error) {
+      console.error('[api/conversations] archive change failed', error)
+      return NextResponse.json(
+        { error: 'Could not archive the conversation', code: 'internal_error' },
         { status: 500 },
       )
     }
