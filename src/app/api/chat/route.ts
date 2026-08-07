@@ -135,11 +135,30 @@ export async function POST(request: Request) {
   // An existing conversation must be the caller's. RLS is what makes this
   // return null for someone else's row, so the 404 is a database guarantee
   // rather than a filter this handler remembered to write.
+  /**
+   * The stored standing instruction, and the *only* place a system prompt for
+   * an existing conversation may come from. (F23)
+   *
+   * Null until proven otherwise, including for a conversation being created a
+   * few lines below — there is no row to read yet, so that path takes the
+   * body's prompt instead, and this one never does.
+   */
+  let systemPrompt: string | null = null
+
   if (conversationId) {
     const conversation = await getConversation(conversationId)
     if (!conversation) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
+
+    // Read from the row, never from `body.systemPrompt`. The body may carry one
+    // — the composer sends it on every message, because on `/chat` that is the
+    // only way it can arrive — and for an existing conversation it is ignored
+    // here on purpose. Honouring it would make the field a per-request
+    // override: one message answered under different standing instructions than
+    // the conversation records, with nothing on screen or in the database to
+    // say so. Whoever moves this line moves that guarantee with it.
+    systemPrompt = conversation.system_prompt
   }
 
   /**
@@ -254,9 +273,18 @@ export async function POST(request: Request) {
   let history: UIMessage[]
 
   try {
-    targetId =
-      conversationId ?? (await createConversation(user.id, { provider, modelId }))
-    if (!conversationId) createdConversationId = targetId
+    if (conversationId) {
+      targetId = conversationId
+    } else {
+      // The one moment the body's system prompt is authoritative: there is no
+      // row to have stored one. A regeneration cannot reach here — it requires
+      // an existing conversation — so the send branch is the only source.
+      const requested = 'regenerate' in body ? null : (body.systemPrompt ?? null)
+
+      targetId = await createConversation(user.id, { provider, modelId }, requested)
+      createdConversationId = targetId
+      systemPrompt = requested
+    }
 
     if ('regenerate' in body) {
       // Destructive, so it waits for the line above like every other delete —
@@ -382,6 +410,10 @@ export async function POST(request: Request) {
 
   const result = streamText({
     model,
+    // undefined rather than null when there is none: `system: null` would be a
+    // value handed to the provider, and the schema collapses '' to null for the
+    // same reason. (F23)
+    system: systemPrompt ?? undefined,
     messages: await convertToModelMessages(history),
     onChunk: ({ chunk }) => {
       if (chunk.type === 'text-delta') streamedText += chunk.text
