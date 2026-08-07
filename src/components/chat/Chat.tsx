@@ -109,18 +109,40 @@ export function Chat({
         // Only the newest turn goes over the wire. The server loads history
         // from the database — a stated invariant, not an optimisation, because
         // a client must not be able to rewrite its own past turns.
-        prepareSendMessagesRequest: ({ messages, body }) => ({
+        prepareSendMessagesRequest: ({ messages, body, trigger }) => ({
           body: {
             conversationId,
-            message: messages[messages.length - 1],
             provider: model.provider,
             modelId: model.modelId,
-            // Per-call overrides — feature 19's `editMessageId` — arrive here as
-            // `body` and are dropped on the floor unless they are spread in.
-            // Losing it does not fail: the request is simply an ordinary send,
-            // so the server appends instead of editing while the client has
-            // already truncated its own view. The two only disagree after a
-            // reload, which is what caught it.
+
+            /**
+             * Which of the two request shapes this is, decided by the SDK
+             * rather than by us. `regenerate()` sets `trigger` itself, so there
+             * is no flag here for a caller to forget.
+             *
+             * The branch is load-bearing, and its absence would be silent.
+             * `regenerate()` slices the assistant message out of client state
+             * *before* calling the transport, which leaves the USER's prompt as
+             * `messages[messages.length - 1]` — so sending it unconditionally
+             * would ask the server to append a prompt it already stores, and
+             * the thread would hold the same question twice. On screen it looks
+             * perfect. Only the database disagrees, and only after a reload.
+             *
+             * `messageId` is deliberately NOT forwarded, though the SDK offers
+             * it. It identifies a row only when the message came from the
+             * server; one that has just streamed carries an id the SDK made up,
+             * so sending it 400s the second regeneration of a page session. The
+             * server reads which answer to replace from the thread instead.
+             */
+            ...(trigger === 'regenerate-message'
+              ? { regenerate: true as const }
+              : { message: messages[messages.length - 1] }),
+
+            // Per-call overrides — feature 19's `editMessageId`, feature 20's
+            // model — arrive here as `body` and are dropped on the floor unless
+            // they are spread in. Losing one does not fail loudly: the request
+            // is simply an ordinary send. Spread LAST so a regeneration against
+            // a different model beats the composer's current choice above.
             ...body,
           },
         }),
@@ -131,50 +153,54 @@ export function Chat({
     [conversationId, model.provider, model.modelId],
   )
 
-  const { messages, sendMessage, setMessages, status, stop, error } = useChat<ChatMessage>({
-    // Gives each conversation its own isolated state when switching between them.
-    id: conversationId ?? 'new',
-    messages: initialMessages,
-    transport,
-    onData: (part) => {
-      if (part.type === 'data-conversation') {
-        createdConversationId.current = (part.data as { id: string }).id
-      }
-    },
-    onFinish: () => {
-      const created = createdConversationId.current
+  const { messages, sendMessage, regenerate, setMessages, status, stop, error } =
+    useChat<ChatMessage>({
+      // Gives each conversation its own isolated state when switching between them.
+      id: conversationId ?? 'new',
+      messages: initialMessages,
+      transport,
+      onData: (part) => {
+        if (part.type === 'data-conversation') {
+          createdConversationId.current = (part.data as { id: string }).id
+        }
+      },
+      onFinish: () => {
+        const created = createdConversationId.current
 
-      if (created) {
-        createdConversationId.current = null
-        router.replace(`/chat/${created}`)
-      }
+        if (created) {
+          createdConversationId.current = null
+          router.replace(`/chat/${created}`)
+        }
 
-      // Required in both cases: Next preserves a layout across navigation, and
-      // the sidebar's conversation query lives in that layout. Without this a
-      // new conversation never appears and an existing one never moves up.
-      router.refresh()
+        // Required in both cases: Next preserves a layout across navigation, and
+        // the sidebar's conversation query lives in that layout. Without this a
+        // new conversation never appears and an existing one never moves up.
+        router.refresh()
 
-      // Only the request that created the conversation asks for a title, which
-      // is exactly the request whose exchange the title is drawn from. Every
-      // later message skips it, so there is no round trip per turn forever.
-      //
-      // Deliberately not awaited: onFinish must not block on it, and there is
-      // nothing to do if it fails. The server refuses idempotently, so an
-      // interrupted first answer simply leaves the conversation as 'New chat'.
-      if (created) void nameConversation(created)
-    },
-  })
+        // Only the request that created the conversation asks for a title, which
+        // is exactly the request whose exchange the title is drawn from. Every
+        // later message skips it, so there is no round trip per turn forever.
+        //
+        // Deliberately not awaited: onFinish must not block on it, and there is
+        // nothing to do if it fails. The server refuses idempotently, so an
+        // interrupted first answer simply leaves the conversation as 'New chat'.
+        if (created) void nameConversation(created)
+      },
+    })
 
   const isStreaming = status === 'submitted' || status === 'streaming'
 
   /**
-   * The thread as it was before an edit truncated it, held until the request is
-   * known to have been accepted.
+   * The thread as it was before something removed part of it optimistically,
+   * held until the request is known to have been accepted.
    *
-   * A ref rather than state because nothing renders from it — it exists only so
-   * the effect below can put the messages back.
+   * Two paths write it and they have the same shape: an edit truncates from the
+   * rewritten prompt, and `regenerate()` drops the answer it is replacing —
+   * both before the server has agreed to anything. A ref rather than state
+   * because nothing renders from it; it exists only so the effect below can put
+   * the messages back.
    */
-  const beforeEdit = useRef<ChatMessage[] | null>(null)
+  const restorePoint = useRef<ChatMessage[] | null>(null)
 
   /**
    * Rewrites a prompt and regenerates from it, dropping everything after it.
@@ -187,40 +213,61 @@ export function Chat({
     const index = messages.findIndex((candidate) => candidate.id === messageId)
     if (index < 0) return
 
-    beforeEdit.current = messages
+    restorePoint.current = messages
     setMessages(messages.slice(0, index))
 
     void sendMessage({ text: nextText }, { body: { editMessageId: messageId } })
   }
 
   /**
-   * Puts the thread back when an edit is refused.
+   * Asks for a second answer to a prompt that has already been sent.
    *
-   * This is what makes the optimistic truncation safe, and it keys off `status`
-   * rather than a rejected promise because `sendMessage` does not reject —
-   * measured against the installed SDK, whose `makeRequest` catches, calls
-   * `onError`, and sets `status: 'error'`. A `.catch()` here would look right,
-   * compile, and never once run.
+   * No truncation here, unlike `editMessage` above: `regenerate()` removes the
+   * assistant message from client state itself before it calls the transport.
+   * The snapshot is still taken, because that removal is just as optimistic —
+   * the server can refuse on quota and never delete anything.
    *
-   * The server truncates strictly *after* the model resolves and the quota slot
-   * is claimed, so a spent allowance or a tripped breaker deletes nothing. Only
+   * `model` is passed through as a per-call body override rather than set on
+   * the composer. Nothing here calls `useModelMutation`, so the conversation's
+   * own provider and model are untouched and only the new assistant row records
+   * the choice.
+   */
+  function regenerateMessage(
+    messageId: string,
+    model?: { provider: Provider; modelId: string },
+  ) {
+    restorePoint.current = messages
+    void regenerate({ messageId, body: model })
+  }
+
+  /**
+   * Puts the thread back when an edit or a regeneration is refused.
+   *
+   * This is what makes the optimistic removal safe, and it keys off `status`
+   * rather than a rejected promise because neither `sendMessage` nor
+   * `regenerate` rejects — measured against the installed SDK, whose
+   * `makeRequest` catches, calls `onError`, and sets `status: 'error'`. A
+   * `.catch()` here would look right, compile, and never once run.
+   *
+   * The server deletes strictly *after* the model resolves and the quota slot
+   * is claimed, so a spent allowance or a tripped breaker removes nothing. Only
    * the screen lost those messages, and only the screen has to restore them.
    *
    * The snapshot is dropped the moment tokens start arriving: past that point
-   * the server really has truncated, and a later stream failure must leave the
-   * thread truncated rather than resurrecting messages the database no longer
+   * the server really has deleted, and a later stream failure must leave the
+   * thread as it is rather than resurrecting messages the database no longer
    * holds.
    */
   useEffect(() => {
     if (status === 'streaming') {
-      beforeEdit.current = null
+      restorePoint.current = null
       return
     }
 
-    if (status !== 'error' || !beforeEdit.current) return
+    if (status !== 'error' || !restorePoint.current) return
 
-    const restore = beforeEdit.current
-    beforeEdit.current = null
+    const restore = restorePoint.current
+    restorePoint.current = null
     setMessages(restore)
   }, [status, setMessages])
 
@@ -242,7 +289,9 @@ export function Chat({
    * This memo is load-bearing rather than an optimisation.
    */
   const derivedEntries = toOutlineEntries(messages)
-  const outlineKey = derivedEntries.map((entry) => `${entry.id}:${entry.label}`).join('\n')
+  const outlineKey = derivedEntries
+    .map((entry) => `${entry.id}:${entry.label}`)
+    .join('\n')
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on outlineKey, see above
   const entries = useMemo(() => derivedEntries, [outlineKey])
@@ -311,9 +360,14 @@ export function Chat({
           <Thread
             messages={messages}
             isStreaming={isStreaming}
+            provider={model.provider}
             modelId={model.modelId}
+            configuredProviders={configuredProviders}
+            remaining={remaining}
+            sharedKeyAvailable={sharedKeyAvailable}
             highlightedId={highlightedId}
             onEdit={editMessage}
+            onRegenerate={regenerateMessage}
           />
         )}
       </div>
