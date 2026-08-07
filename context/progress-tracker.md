@@ -17,9 +17,9 @@ progress, and what is next.
 
 ## Current Status
 
-**Phase:** Phase 3 — Conversation craft
-**Last completed:** 23 Per-conversation system prompt — 280 tests (15 new), typecheck, lint and a production build green. The PATCH union took a fifth `.strict()` branch, and this one differs from the other four: **null is a value, not an absence** — it is how a prompt is cleared, so an absent key and an explicit null had to mean different things. The schema collapses empty and whitespace-only to null, `.trim()` first, so null is the single spelling of "no prompt" and the route can send `system: undefined` rather than handing a provider an empty string. **Proven end to end rather than asserted:** with the prompt set to "always reply BANANA", asking for the capital of France returned BANANA — and a crafted `fetch` carrying that same prompt in the body of an existing conversation returned Tokyo, which is the override guard holding. Four mutations each turned red exactly one test. The 360px pass caught a regression this feature introduced: adding a third control squeezed the quota meter to 58px, where it rendered as four lines in a column, so the toolbar group now wraps — measured before and after, and desktop is unchanged at one 32px line
-**Next:** Phase 3 checkpoint — run the verification commands, inspect the phase diff for bugs and regressions, confirm code consistency across F18–F23, update this file, compact `build-journal.md` by promoting Phase 3's still-binding decisions into `constraints.md`, and record any follow-up work
+**Phase:** Phase 3 closed — Phase 4 (Prompt library and search) is next
+**Last completed:** Phase 3 checkpoint — 280 tests, typecheck, lint and a production build green; security and performance advisors clean of anything new (both remaining notices are the documented intentional ones). The phase diff is 52 files and ~6,100 insertions across F18–F23, reviewed for consistency: all five conversation writes share one `.select('id').maybeSingle()` shape, all five PATCH branches 404 on false and carry an `internal_error` catch, and no leftover TODO, `console.log` or debugger reached `src/`. **One latent defect found and fixed:** four migration files carried hand-chosen timestamps while `apply_migration` had recorded its own, so `supabase migration up` would have seen four unapplied migrations and re-run four bare `create function` statements against a database that already has them. They were renamed to match the ledger — content byte-identical, four cross-references updated. Phase 3's still-binding rules were promoted into `constraints.md` under a new **Conversation state** topic plus three additions to Shell and layout, the F15 `updated_at` bullet was widened rather than duplicated, and `build-journal.md` collapsed from 563 lines to 135. Six follow-ups recorded, none blocking
+**Next:** Phase 4 — Prompt library and search, opening with 24 Prompt library: a `prompts` table that has existed since F02 with an index nothing has ever used, CRUD at `/prompts`, and the "Save to prompt library" shortcut F23 deliberately deferred to it
 
 ---
 
@@ -62,7 +62,7 @@ progress, and what is next.
 - [x] 21 Rename and pin
 - [x] 22 Archive
 - [x] 23 Per-conversation system prompt
-- [ ] Phase checkpoint — verify Phase 3 — Conversation craft is stable before starting the next phase
+- [x] Phase checkpoint — verify Phase 3 — Conversation craft is stable before starting the next phase
 
 ### Phase 4 — Prompt library and search
 
