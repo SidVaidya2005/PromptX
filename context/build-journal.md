@@ -40,6 +40,95 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 3 — Conversation craft
 
+### 20 Regenerate — 2026-08-07
+
+A regenerate control on the last assistant message, including one that failed or
+was stopped, with a menu offering any other model the caller can reach. The old
+answer is deleted before the new one is written; the model chosen is recorded on
+that message and nowhere else.
+
+**The SDK supplies the discriminator, and reading it off the installed package
+is what made the feature tractable.** `node_modules/ai/dist/index.js:17148-17169`
+shows `regenerate({ messageId })` slicing the assistant message out of client
+state *before* calling the transport, then setting
+`trigger: 'regenerate-message'`. The consequence is the whole design: after that
+slice, `messages[messages.length - 1]` is the **user's prompt**, and F08's
+`prepareSendMessagesRequest` sends that unconditionally — so without a branch,
+every regeneration asks the server to append a prompt it already stores.
+Measured, not predicted: removing the branch left the thread holding the same
+question twice **and** left the old answer undeleted, because the server saw an
+ordinary send.
+
+**The destructive write needed no migration, unlike F19's.** The route proves
+above the provider line that the conversation's last row is an assistant
+message, so "everything after it" is empty and the `(created_at, id)` truncation
+rule has nothing to decide. One `DELETE` by primary key is atomic on its own.
+Hoisting it above `resolveModel()` returned the *identical* 429 on a spent
+allowance and took the thread from two rows to one — the same proof F19 ran, on
+the same line, for a different write.
+
+**Reads may live above that line; only writes may not.** `listByConversation()`
+moved up so the regenerate branch can 404 a bad request before a quota slot is
+claimed. The edit path still re-reads *after* truncating; a copy taken above the
+line would be the pre-delete thread.
+
+**The design changed mid-verification, and only the browser could have caused
+it.** The first version named the row to replace with the `messageId` the SDK
+offers for free — obviously correct, and wrong. That id is a database uuid only
+when the message came from the server; one that has just streamed carries an id
+the SDK minted. So the first regeneration worked and the second sent
+`a6i8GltgJ1K7KZtE` and was refused as a malformed uuid. No unit test could have
+found it: every test constructs its own body, and the divergence exists only in
+a browser that has streamed once without navigating. The id was dropped rather
+than repaired — it was never load-bearing, since the server already knew which
+row was last — and `regenerate: true` now says the same thing without pretending
+to identify a row. **The same divergence is latent in F19's `editMessageId`**,
+hidden today only because a new conversation triggers `router.replace()`, a real
+navigation that remounts `Chat` with database ids; `router.refresh()` does not.
+Recorded in `constraints.md` rather than fixed, because it is F19's to fix.
+
+**`.strict()` on both union branches is the guard, not tidiness.** `z.union`
+tries members in order and a plain object strips undeclared keys, so a body
+carrying both `message` and `regenerate` would match the send branch, lose the
+flag, and append a duplicate prompt — the same bug arriving through the schema.
+Mutation: removing `.strict()` from the send branch turned exactly one test red
+and left the other ten green.
+
+**The menu's gate is a second reading of a shared primitive, not a second rule.**
+`isModelAvailable` and `willUseSharedKey` are the definitions; the composer
+composes them into "why am I blocked" for its sentence, the menu into "yes or
+no" per model. Measured with the allowance forced to 20: the shared model greys
+out while all four OpenRouter entries stay live, which is exactly the escape
+hatch the composer's own message offers.
+
+**Verified:** 237 tests (11 new), typecheck, lint, production build. In the
+browser — a regeneration replaced the answer with **one** prompt row surviving;
+two consecutive regenerations without a reload both returned 200 (the case that
+exposed the id bug); a different model wrote `openrouter` /
+`anthropic/claude-opus-5` onto the message while `conversations.provider` and
+`model_id` stayed `google` / `gemini-3.6-flash`; a refused regeneration left the
+thread byte-for-byte intact; the outline rail kept **identical element refs**
+across a regeneration; the control measured 44px and `opacity: 1` under iPhone
+15 emulation, and reached focus by keyboard with the row settling to `opacity: 1`
+(the first read returned `0` — the F06/F07 transition-start trap, caught by
+re-reading).
+
+**Not verified, and why.** No OpenRouter generation *completed*: the account is
+out of credits and every model returns "requires more credits, or fewer
+max_tokens". The different-model path is therefore proven up to and including
+what the row records, but not that its tokens stream — the same `streamText`
+path serves both, so this is an account limit rather than an untested branch.
+Worth re-checking whenever the account is funded.
+
+**Incidental confirmation of F17.** A first attempt to force the allowance set
+`message_count = 20` with raw SQL and did not touch `updated_at`; the row looked
+stale, and `reconcile_shared_key_usage()` lowered it to the true count of 3
+before the request landed. The sweep doing exactly its job, observed by accident.
+
+**Note on the Key Decisions eviction.** The F13 bullet displaced from
+`progress-tracker.md` (`bytea` is hex over PostgREST) was already held in
+`constraints.md` under Database access, so the move needed no new bullet.
+
 ### 19 Edit and resend — 2026-08-06
 
 Hovering a user message reveals Edit; the bubble becomes an inline textarea;

@@ -455,6 +455,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - The previous assistant message is deleted before the new one is persisted
 - When a different model is chosen, only this message records it — the conversation's default is unchanged
 
+**Decisions taken during this feature** (see `build-journal.md` for the full entries):
+
+- **`regenerate()` supplies its own discriminator, and reading it is the feature.** Measured off the installed SDK rather than the docs: `regenerate({ messageId })` slices the assistant message out of client state *before* calling the transport, then sets `trigger: 'regenerate-message'`. So `messages[messages.length - 1]` is by then the **user's prompt**, and F08's `prepareSendMessagesRequest` — which sends that unconditionally — would have asked the server to append a prompt it already stores. The thread would hold the same question twice, the screen would look perfect, and only a reload would disagree. `trigger` is what the branch keys on, so unlike F19's per-call body there is no flag a caller can forget
+- **`chatRequestSchema` became a union of two `.strict()` branches**, and strict is the load-bearing half. `z.union` tries members in order and an ordinary zod object *strips* undeclared keys, so without it a body carrying both `message` and `regenerateMessageId` matches the send branch, loses the regenerate id, and is handled as an ordinary send — the duplicate-prompt bug arriving through the schema instead. Proven by mutation: removing `.strict()` from the send branch turns exactly one test red and leaves the other ten green
+- **The destructive write is a single `DELETE` by primary key, and needs no migration.** The route proves above the provider line that the target is the *last* message and an assistant row; that makes "everything after it" empty, so F19's `(created_at, id)` truncation rule has nothing to decide and is not copied here. One statement is atomic on its own, so no transaction is needed either — and if the follow-up insert fails, the thread shows the prompt with no answer, which is the state the user asked for
+- **Reads may live above the "will reach a provider" line; only writes may not.** `listByConversation()` was hoisted so the regenerate branch can refuse a bad id before a quota slot is claimed. The edit path still re-reads *after* truncating — a copy taken above the line would be the pre-delete thread, the one thing it must not send to the model
+- **The model chosen for a regeneration is a per-call body override and nothing else.** Nothing on that path calls `useModelMutation`, so the conversation row and the composer's picker are untouched and only the new assistant row records what answered
+- **The regenerate menu is gated by the composer's rule, and the composite is written twice on purpose.** Both read `isModelAvailable` and `willUseSharedKey` — the shared definitions — but the composer needs to know *why* it is blocked so it can say so in a sentence, while the menu only needs yes or no per model. Two readings of one primitive, which is the F16 shape, not two copies of a rule
+- **Offered on a failed or stopped answer, not only a completed one.** That is the likeliest reason anyone reaches for it, and withholding it there leaves retyping the prompt as the only way back
+
 ### 21 Rename and pin
 
 **UI:**
