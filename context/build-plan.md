@@ -515,15 +515,23 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **UI:**
 
-- A system prompt control in the thread header, showing "Default" or a truncated preview
+- A system prompt control **in the composer row, beside the model picker**, showing "Default" or a truncated preview. The plan said "thread header"; see the decision below
 - Opens a dialog with a textarea and a character count against a 10,000 cap
-- A "Save to prompt library" shortcut (wired in Phase 4)
+- ~~A "Save to prompt library" shortcut~~ — deferred to F24, where the library it saves to actually exists
 
 **Logic:**
 
 - `updateSystemPrompt()` persisting to `conversations.system_prompt`
 - Passed as `system` to `streamText` on every subsequent request
 - Changing it affects future messages only; history is untouched
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The control lives in the composer, not a thread header, because no desktop thread header exists.** `AppShell`'s header is `desktop:hidden`, and DESIGN.md's only "thread header" reference is that mobile bar — so building one would be new chrome with no design spec, existing solely for this control. The composer already holds the per-conversation "what the next message will use" state (the model picker) and is pinned at every width
+- **A fifth `.strict()` branch, `{systemPrompt: string | null}`.** Explicit null is how the prompt is cleared — null is what the column stores and what "Default" means, so an empty-string convention would need a second rule to translate it. Empty or whitespace-only normalises to null in the schema, `.trim()` declared first per F21
+- **On `/chat` the prompt rides in the first request body, and the server honours it only when *creating* the conversation.** Same shape the model picker already uses. The guard is the load-bearing half: for an existing conversation the route reads the row and ignores any `systemPrompt` in the body, because without that the field becomes a per-request override — a different feature, and one that would let a stored prompt be bypassed silently
+- **`updateSystemPrompt()` does not touch `updated_at`**, the fourth feature running to apply that rule. Changing an instruction is not activity
+- **No per-message column and no migration.** Unlike F15's per-message model, which exists for billing and attribution, a system prompt has neither pressure behind it — and it would duplicate up to 10,000 characters per row
 
 ---
 

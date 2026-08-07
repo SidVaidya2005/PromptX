@@ -40,6 +40,77 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 3 — Conversation craft
 
+### 23 Per-conversation system prompt — 2026-08-07
+
+A system prompt control in the composer toolbar, beside the model picker,
+reading "Default" or a truncated preview and opening a dialog with a textarea
+and a live count against a 10,000 cap. Stored on `conversations.system_prompt`
+and passed as `system` to `streamText`.
+
+**It is in the composer because there is no thread header to put it in.** §23
+said "thread header"; `AppShell`'s header is `desktop:hidden`, and DESIGN.md's
+only reference to a thread header is that same mobile bar — so building one
+would have been new chrome with no design spec, existing for one control. The
+composer already holds the other per-conversation choice about what the *next*
+message does.
+
+**Null is a value here, and that is what makes this branch different from the
+other four on the PATCH union.** Clearing a prompt is `{systemPrompt: null}`;
+leaving it alone is the key being absent. Collapse those two and removing an
+instruction silently leaves it in force while the control says "Default" — the
+worst available disagreement, because every later answer follows a rule the user
+believes they deleted. The schema also collapses `''` and whitespace to null, so
+null is the single spelling of "no prompt" and the route can send
+`system: undefined` rather than handing a provider an empty string.
+
+**The interesting design problem was a field that is authoritative on exactly
+one path.** On `/chat` there is no row yet, so a prompt chosen before the first
+message can only reach the server in the request body — the same arrangement the
+model already has. But the model is needed to *route* the request, while the
+system prompt is needed to *generate*, so honouring the body value on an
+existing conversation would quietly turn it into a per-request override: one
+answer produced under standing instructions the conversation does not record.
+The whole difference is one `if` in the chat route, with nothing structural
+holding it there.
+
+So it was proven by behaviour rather than by reading, and both halves cost a
+real shared-key message:
+
+- With the prompt set through the control to *"Always reply with exactly the word BANANA and nothing else."*, asking **"What is the capital of France?"** returned **BANANA**. That is the only check that shows the string reached the provider rather than merely the database — and it exercised the creation path, since it was set on `/chat` before the conversation existed.
+- A crafted `fetch` carrying that same `systemPrompt` in the body of an **existing** conversation whose column is null returned *"Red is a warm color, and the capital of Japan is Tokyo."* The override was ignored, and the row stayed null.
+
+**The 360px pass caught a regression this feature introduced, which no test
+could have.** The composer toolbar is `nowrap`; with the model picker alone the
+quota meter had room beside it, and adding a third control squeezed the meter to
+58px, where "16 of 20 free messages left today" rendered as **four lines in a
+column**. Measured, not eyeballed. The left group now wraps with a row gap, the
+meter is back to one line at 189px, and desktop is unchanged at one 32px line —
+also measured, before and after.
+
+**One small extraction:** the trigger's preview logic moved to
+`systemPromptPreview()` in `src/lib/titles.ts`, because F05's rule is that the
+pure helper is the only part of a UI feature a node-environment suite can reach.
+It collapses whitespace *before* truncating — a prompt that opens with a blank
+line would otherwise truncate to nothing and render as an empty trigger, which
+at a glance is indistinguishable from "Default".
+
+**Verified.** 280 tests (15 new), `pnpm typecheck`, `pnpm lint` and `pnpm build`
+all green. Four mutations, each turning red exactly one test: `.trim()` moved
+after `.max()`, `.strict()` off the system prompt branch, `updated_at: now()`
+added to `updateSystemPrompt`, and `createConversation` ignoring the prompt it is
+handed. In the browser, every check read back from the database: the trigger
+seeds from the row on load and the textarea seeds on open; a whitespace-only save
+clears to null and the trigger returns to "Default"; `updated_at` came back
+byte-identical after every save; at 10,001 characters the counter turns
+`text-danger` and Save disables. No duplicate ids at 360px, no horizontal
+scroll, control at the 44px floor. Console clean apart from the pre-existing
+missing favicon.
+
+**Left behind deliberately:** the two verification generations are still in the
+database — a "Capital of France" conversation whose only answer is "BANANA", and
+two messages the crafted fetch added to an existing conversation. Deleting rows
+is not reversible, so they were reported rather than cleaned up unilaterally.
+
 ### 22 Archive — 2026-08-07
 
 Archive and Unarchive in the sidebar overflow menu, a "Show archived" toggle in
