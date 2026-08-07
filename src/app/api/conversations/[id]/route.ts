@@ -3,10 +3,15 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
 import { findModel } from '@/lib/models'
-import { updateConversationModelSchema } from '@/lib/schemas'
+import { updateConversationSchema } from '@/lib/schemas'
 
 import { getUser } from '@/server/auth'
-import { deleteConversation, updateConversationModel } from '@/server/data/conversations'
+import {
+  deleteConversation,
+  renameConversation,
+  setConversationPinned,
+  updateConversationModel,
+} from '@/server/data/conversations'
 
 export const runtime = 'nodejs'
 
@@ -63,18 +68,30 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
 }
 
 /**
- * Points a conversation at a different model for its next message.
+ * Changes one thing about a conversation: its model, its title, or its pin.
  *
- * The catalog is checked here as well as in `resolveModel()`, and the duplication
- * is the point: without it a conversation can be left holding a model id that
- * every subsequent send refuses, which reads as a thread that has stopped
- * working rather than as a choice that was never valid. Refusing at the moment
- * of the change keeps the bad state from being written at all — the same
- * ordering `/api/chat` uses for its own refusals.
+ * One endpoint rather than three, because all three are the same statement
+ * against the same row and differ only in which column moves. Which one is meant
+ * is decided by the shape of the body — `updateConversationSchema` is a union of
+ * strict branches, so a body carrying two intents matches none of them and is
+ * refused rather than silently answered as one.
  *
- * Nothing above this conversation's newest message moves. Each message already
- * records the model that produced it, so a mid-thread change stays visible in
- * the thread rather than rewriting its history.
+ * Each branch below narrows with `in`, never an assertion: `code-standards.md`
+ * permits no `!` on a value derived from a request body.
+ *
+ * **The model branch checks the catalog and the others check nothing.** The
+ * duplication with `resolveModel()` is the point: without it a conversation can
+ * be left holding a model id that every subsequent send refuses, which reads as
+ * a thread that has stopped working rather than as a choice that was never
+ * valid. Refusing at the moment of the change keeps the bad state from being
+ * written at all — the same ordering `/api/chat` uses for its own refusals. A
+ * title and a pin have no catalog to be absent from; their bounds are the
+ * schema's whole answer.
+ *
+ * Nothing in the thread moves for any of the three. Each message already records
+ * the model that produced it, so a mid-thread change stays visible in the thread
+ * rather than rewriting its history — and neither rename nor pin writes
+ * `updated_at`, so the sidebar keeps ordering on activity.
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const user = await getUser()
@@ -92,16 +109,60 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     )
   }
 
-  const parsedBody = updateConversationModelSchema.safeParse(await request.json())
+  const parsedBody = updateConversationSchema.safeParse(await request.json())
   if (!parsedBody.success) {
-    console.error('[api/conversations] invalid model change', parsedBody.error)
+    console.error('[api/conversations] invalid update', parsedBody.error)
     return NextResponse.json(
       { error: 'Invalid request', code: 'invalid_input' },
       { status: 400 },
     )
   }
 
-  const { provider, modelId } = parsedBody.data
+  const body = parsedBody.data
+
+  if ('title' in body) {
+    // Already trimmed and bounded by the schema, which is also why the value
+    // echoed back is the parsed one rather than what arrived on the wire.
+    const { title } = body
+
+    try {
+      const renamed = await renameConversation(parsedId.data, title)
+
+      if (!renamed) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({ title })
+    } catch (error) {
+      console.error('[api/conversations] rename failed', error)
+      return NextResponse.json(
+        { error: 'Could not rename the conversation', code: 'internal_error' },
+        { status: 500 },
+      )
+    }
+  }
+
+  if ('pinned' in body) {
+    const { pinned } = body
+
+    try {
+      const changed = await setConversationPinned(parsedId.data, pinned)
+
+      if (!changed) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({ pinned })
+    } catch (error) {
+      console.error('[api/conversations] pin change failed', error)
+      return NextResponse.json(
+        { error: 'Could not change the pin', code: 'internal_error' },
+        { status: 500 },
+      )
+    }
+  }
+
+  const { provider, modelId } = body
 
   if (!findModel(provider, modelId)) {
     return NextResponse.json(

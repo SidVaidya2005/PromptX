@@ -181,6 +181,82 @@ export async function updateConversationModel(
 }
 
 /**
+ * Gives a conversation the name its owner chose. (F21)
+ *
+ * Unconditional where `setGeneratedTitle` is guarded: a person renaming their
+ * own conversation outranks whatever is there, including a title the model
+ * generated. The relationship runs the other way — once the title is anything
+ * but 'New chat', the generator's `.eq()` declines to write — so a manual rename
+ * suppresses auto-titling permanently without a column to record that it
+ * happened.
+ *
+ * Bounds and whitespace are `conversationRenameSchema`'s job at the route. What
+ * arrives here is already trimmed and within `MAX_TITLE_LENGTH`.
+ *
+ * Returns whether a row actually changed, for the reason `updateConversationModel`
+ * records: RLS makes someone else's conversation invisible rather than
+ * forbidden, so an update that matches nothing reports no error. `updated_at` is
+ * left alone — the sidebar orders on activity, and naming something is not
+ * activity.
+ */
+export async function renameConversation(id: string, title: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ title })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] renameConversation failed', error)
+    throw new Error('Failed to rename conversation')
+  }
+
+  return data !== null
+}
+
+/**
+ * Pins a conversation to the top of the sidebar, or lets it back into the
+ * recency ordering. (F21)
+ *
+ * Takes the desired state rather than toggling. A toggle would be implementable
+ * atomically — `case when pinned_at is null` — so this is not about a race; it
+ * is that a delta undoes itself when the same request arrives twice, and a state
+ * does not.
+ *
+ * The timestamp written is the moment of the pin, and nothing reads its value
+ * yet: `listConversations()` orders on it but `groupConversations()` only asks
+ * whether it is null. Recording it anyway is what leaves "most recently pinned
+ * first" available without a migration.
+ *
+ * `updated_at` stays where it is, and this is the case where that matters most:
+ * touching it would reorder the row *inside* the Pinned group for a click that
+ * produced no message.
+ */
+export async function setConversationPinned(
+  id: string,
+  pinned: boolean,
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ pinned_at: pinned ? new Date().toISOString() : null })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] setConversationPinned failed', error)
+    throw new Error('Failed to change the pin')
+  }
+
+  return data !== null
+}
+
+/**
  * Deletes a conversation. Messages and attachments follow by `on delete cascade`.
  *
  * Returns whether a row actually went. The distinction matters because RLS makes
