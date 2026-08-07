@@ -209,6 +209,28 @@ export const MAX_TITLE_LENGTH = 60
 export const DEFAULT_CONVERSATION_TITLE = 'New chat'
 
 /**
+ * Ceiling on a per-conversation system prompt. (F23)
+ *
+ * Matches the figure `architecture.md` records against the column and the one
+ * `build-plan.md` §23 specifies, rather than being derived from any provider's
+ * context window — a prompt this long is already a design problem, and the cap
+ * is here to bound the request body, not to fit a particular model.
+ *
+ * Measured after trimming, which is the only reading that makes a pasted prompt
+ * with trailing whitespace behave the way its author expects.
+ */
+export const MAX_SYSTEM_PROMPT_LENGTH = 10_000
+
+/**
+ * How much of a system prompt the composer shows before ellipsising.
+ *
+ * Small on purpose: the control sits beside the model picker on one line at
+ * 360px, and its job is to say *that* there is a prompt and roughly what it is
+ * about. Reading it is what the dialog is for.
+ */
+export const SYSTEM_PROMPT_PREVIEW_LENGTH = 40
+
+/**
  * Hard ceiling on the title generation call.
  *
  * Deliberately not STREAM_TIMEOUT_MS. Two minutes is the right bound for an

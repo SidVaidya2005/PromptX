@@ -12,6 +12,7 @@ import {
   setConversationArchived,
   setConversationPinned,
   updateConversationModel,
+  updateSystemPrompt,
 } from '@/server/data/conversations'
 
 export const runtime = 'nodejs'
@@ -69,16 +70,20 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
 }
 
 /**
- * Changes one thing about a conversation: its model, its title, or its pin.
+ * Changes one thing about a conversation: its model, title, pin, archive, or
+ * system prompt.
  *
- * One endpoint rather than three, because all three are the same statement
- * against the same row and differ only in which column moves. Which one is meant
- * is decided by the shape of the body — `updateConversationSchema` is a union of
+ * One endpoint rather than five, because all five are the same statement against
+ * the same row and differ only in which column moves. Which one is meant is
+ * decided by the shape of the body — `updateConversationSchema` is a union of
  * strict branches, so a body carrying two intents matches none of them and is
  * refused rather than silently answered as one.
  *
  * Each branch below narrows with `in`, never an assertion: `code-standards.md`
- * permits no `!` on a value derived from a request body.
+ * permits no `!` on a value derived from a request body. That also means the
+ * *order* of these branches is irrelevant to correctness — the schema has
+ * already guaranteed exactly one key is present — so they read in the order the
+ * features arrived.
  *
  * **The model branch checks the catalog and the others check nothing.** The
  * duplication with `resolveModel()` is the point: without it a conversation can
@@ -86,13 +91,13 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
  * a thread that has stopped working rather than as a choice that was never
  * valid. Refusing at the moment of the change keeps the bad state from being
  * written at all — the same ordering `/api/chat` uses for its own refusals. A
- * title and a pin have no catalog to be absent from; their bounds are the
- * schema's whole answer.
+ * title, a pin, an archive and a system prompt have no catalog to be absent
+ * from; their bounds are the schema's whole answer.
  *
- * Nothing in the thread moves for any of the three. Each message already records
- * the model that produced it, so a mid-thread change stays visible in the thread
- * rather than rewriting its history — and neither rename nor pin writes
- * `updated_at`, so the sidebar keeps ordering on activity.
+ * Nothing in the thread moves for any of them. Each message already records the
+ * model that produced it, so a mid-thread change stays visible in the thread
+ * rather than rewriting its history — and none of rename, pin, archive or
+ * system prompt writes `updated_at`, so the sidebar keeps ordering on activity.
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const user = await getUser()
@@ -178,6 +183,27 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       console.error('[api/conversations] archive change failed', error)
       return NextResponse.json(
         { error: 'Could not archive the conversation', code: 'internal_error' },
+        { status: 500 },
+      )
+    }
+  }
+
+  if ('systemPrompt' in body) {
+    // Null is a value here, not an absence: it is how the prompt is cleared.
+    const { systemPrompt } = body
+
+    try {
+      const saved = await updateSystemPrompt(parsedId.data, systemPrompt)
+
+      if (!saved) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({ systemPrompt })
+    } catch (error) {
+      console.error('[api/conversations] system prompt change failed', error)
+      return NextResponse.json(
+        { error: 'Could not save the system prompt', code: 'internal_error' },
         { status: 500 },
       )
     }

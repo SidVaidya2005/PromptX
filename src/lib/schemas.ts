@@ -9,11 +9,37 @@
 import { z } from 'zod'
 
 import {
+  MAX_SYSTEM_PROMPT_LENGTH,
   MAX_TITLE_LENGTH,
   PROVIDER_KEY_LABEL_MAX_LENGTH,
   PROVIDER_KEY_MAX_LENGTH,
   PROVIDER_KEY_MIN_LENGTH,
 } from '@/lib/constants'
+
+/**
+ * A system prompt as it arrives from a client, or its absence. (F23)
+ *
+ * Shared by the two routes that can carry one, so "what a system prompt is"
+ * has a single definition — the F15 rule about a rule two runtimes enforce,
+ * applied to a shape rather than a predicate.
+ *
+ * **Empty normalises to null rather than being rejected**, and the transform is
+ * what makes null the only spelling of "no prompt". Clearing the textarea is
+ * the obvious way to remove one, and a schema that refused it would push the
+ * translation into two clients that could then disagree; storing `''` would be
+ * worse still, because the route sends `system: undefined` for null and an
+ * empty string is a *value* the provider would be handed.
+ *
+ * `.trim()` is declared before `.max()` for the reason F21 measured on this
+ * same zod version: checks run in declaration order, so the cap sees the
+ * trimmed length and a pasted prompt is not rejected for its whitespace.
+ */
+const systemPromptValue = z
+  .string()
+  .trim()
+  .max(MAX_SYSTEM_PROMPT_LENGTH)
+  .transform((value) => (value === '' ? null : value))
+  .nullable()
 
 /** Mirrors the `provider` Postgres enum. */
 export const providerSchema = z.enum(['openai', 'anthropic', 'google', 'openrouter'])
@@ -62,6 +88,24 @@ export const chatSendSchema = chatRequestBase
   .extend({
     /** Non-null turns this into an edit-and-resend of an existing user message. */
     editMessageId: z.uuid().nullish(),
+    /**
+     * The system prompt for a conversation that does not exist yet. (F23)
+     *
+     * On `/chat` there is no row to PATCH, so the composer's prompt rides along
+     * with the first message and `createConversation()` stores it — the same
+     * arrangement the model already has.
+     *
+     * **The route honours this only when it is creating the conversation.** For
+     * an existing `conversationId` the stored prompt is read from the row and
+     * this field is ignored, which is what stops it becoming a per-request
+     * override: otherwise any client could send one message under different
+     * standing instructions than the conversation records, and nothing on
+     * screen or in the database would say so.
+     *
+     * Optional here, unlike on the PATCH branch, because absence and null mean
+     * the same thing on a conversation that has no prompt yet.
+     */
+    systemPrompt: systemPromptValue.optional(),
     message: z.object({
       id: z.string().min(1).max(64),
       role: z.literal('user'),
@@ -218,6 +262,20 @@ export const conversationArchiveSchema = z
   .strict()
 
 /**
+ * Setting or clearing a conversation's standing instruction. (F23)
+ *
+ * Explicitly nullable rather than optional, and the difference is the feature:
+ * `{systemPrompt: null}` is how a prompt is *cleared*, so the key being absent
+ * and the key being null have to mean different things. An optional field would
+ * make "leave it alone" and "remove it" the same request.
+ */
+export const conversationSystemPromptSchema = z
+  .object({
+    systemPrompt: systemPromptValue,
+  })
+  .strict()
+
+/**
  * The body of `PATCH /api/conversations/[id]` — one intent at a time.
  *
  * **Every branch is `.strict()`, for the reason `chatRequestSchema` records.**
@@ -235,6 +293,7 @@ export const updateConversationSchema = z.union([
   conversationRenameSchema,
   conversationPinSchema,
   conversationArchiveSchema,
+  conversationSystemPromptSchema,
 ])
 
 export type UpdateConversationInput = z.infer<typeof updateConversationSchema>

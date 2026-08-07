@@ -74,6 +74,7 @@ export async function getConversation(id: string): Promise<Conversation | null> 
 export async function createConversation(
   userId: string,
   model: { provider: Provider; modelId: string },
+  systemPrompt: string | null = null,
 ): Promise<string> {
   const supabase = await createServerSupabaseClient()
 
@@ -83,6 +84,11 @@ export async function createConversation(
       user_id: userId,
       provider: model.provider,
       model_id: model.modelId,
+      // The one moment a system prompt can arrive from a request body. On
+      // `/chat` there is no row to PATCH yet, so the composer's prompt travels
+      // with the first message — and this insert is the only place the chat
+      // route is allowed to read it from. (F23)
+      system_prompt: systemPrompt,
     })
     .select('id')
     .single()
@@ -258,6 +264,48 @@ export async function setConversationPinned(
   if (error) {
     console.error('[data/conversations] setConversationPinned failed', error)
     throw new Error('Failed to change the pin')
+  }
+
+  return data !== null
+}
+
+/**
+ * Sets the standing instruction for a conversation, or clears it. (F23)
+ *
+ * Null is a real value here rather than "no change" — it is how a prompt is
+ * removed, and it is what `getConversation()` reads back as "use the provider's
+ * default". The route sends `system: undefined` for null, so an empty string
+ * must never reach this function: that would be a *value* handed to the model
+ * rather than the absence of one. `conversationSystemPromptSchema` collapses
+ * empty to null before it gets here, which is why this takes `string | null`
+ * and not `string | undefined`.
+ *
+ * Bounded at `MAX_SYSTEM_PROMPT_LENGTH` by that same schema. Nothing is checked
+ * again here, for the reason `renameConversation` records.
+ *
+ * `updated_at` is left alone — the fourth write in a row to say so. Changing an
+ * instruction is not activity, and a conversation should not climb the sidebar
+ * because its owner adjusted how it will answer next time.
+ *
+ * Returns whether a row changed, the RLS no-op distinction every write in this
+ * file makes.
+ */
+export async function updateSystemPrompt(
+  id: string,
+  systemPrompt: string | null,
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ system_prompt: systemPrompt })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] updateSystemPrompt failed', error)
+    throw new Error('Failed to save the system prompt')
   }
 
   return data !== null

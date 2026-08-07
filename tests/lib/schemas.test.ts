@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_TITLE_LENGTH } from '@/lib/constants'
+import { MAX_SYSTEM_PROMPT_LENGTH, MAX_TITLE_LENGTH } from '@/lib/constants'
 import { chatRequestSchema, chatSendSchema, updateConversationSchema } from '@/lib/schemas'
 
 const EDIT_ID = '11111111-2222-4333-8444-555555555555'
@@ -178,11 +178,11 @@ describe('chatRequestSchema — send or regenerate', () => {
 
 /**
  * Feature 21 turned the conversation PATCH body into a union, and the union is
- * what these are about. F22 added the fourth branch.
+ * what these are about. F22 added the fourth branch, F23 the fifth.
  *
- * One endpoint carries four unrelated intents — change the model, rename, pin,
- * archive — and the only thing that distinguishes them is the shape of the
- * body. So the interesting failures are not "a bad title is accepted"; they are
+ * One endpoint carries five unrelated intents — change the model, rename, pin,
+ * archive, set a system prompt — and the only thing that distinguishes them is
+ * the shape of the body. So the interesting failures are not "a bad title is accepted"; they are
  * a body that means two things being quietly answered as one of them.
  */
 describe('updateConversationSchema', () => {
@@ -198,6 +198,10 @@ describe('updateConversationSchema', () => {
     // F22's fourth branch, which the union was built expecting.
     expect(updateConversationSchema.safeParse({ archived: true }).success).toBe(true)
     expect(updateConversationSchema.safeParse({ archived: false }).success).toBe(true)
+    // F23's fifth.
+    expect(updateConversationSchema.safeParse({ systemPrompt: 'Be terse.' }).success).toBe(
+      true,
+    )
   })
 
   /**
@@ -241,7 +245,7 @@ describe('updateConversationSchema', () => {
     )
   })
 
-  it('rejects a body that is none of the four', () => {
+  it('rejects a body that is none of the five', () => {
     expect(updateConversationSchema.safeParse({}).success).toBe(false)
     // `archived` stood here until F22 turned it into a real branch, which is
     // the point of the assertion: an intent the union does not carry yet is
@@ -278,6 +282,70 @@ describe('updateConversationSchema', () => {
     expect(
       updateConversationSchema.safeParse({ title: 'a'.repeat(MAX_TITLE_LENGTH + 1) })
         .success,
+    ).toBe(false)
+  })
+
+  /**
+   * The system prompt branch, and what makes it different from the other four:
+   * null is a VALUE here, not an absence. It is how a prompt is cleared, so
+   * `{systemPrompt: null}` and an absent key must not mean the same thing.
+   */
+  it('accepts a prompt, and accepts null as the way to clear one', () => {
+    const set = updateConversationSchema.safeParse({ systemPrompt: 'Be terse.' })
+    expect(set.success && 'systemPrompt' in set.data && set.data.systemPrompt).toBe(
+      'Be terse.',
+    )
+
+    const cleared = updateConversationSchema.safeParse({ systemPrompt: null })
+    expect(cleared.success && 'systemPrompt' in cleared.data && cleared.data.systemPrompt).toBe(
+      null,
+    )
+  })
+
+  /**
+   * Empty normalises to null rather than being rejected, and the transform is
+   * what keeps null the only spelling of "no prompt". Storing `''` would be
+   * worse than rejecting it: the chat route sends `system: undefined` for null,
+   * so an empty string is a *value* handed to the provider rather than the
+   * absence of one.
+   *
+   * Verified by mutation: moving `.trim()` after `.max()` turns the
+   * whitespace case red.
+   */
+  it('normalises an empty or whitespace-only prompt to null', () => {
+    for (const input of ['', '   ', '\n\t ']) {
+      const parsed = updateConversationSchema.safeParse({ systemPrompt: input })
+
+      expect(parsed.success && 'systemPrompt' in parsed.data && parsed.data.systemPrompt).toBe(
+        null,
+      )
+    }
+  })
+
+  it('trims a prompt and measures the cap against the trimmed length', () => {
+    const exact = 'a'.repeat(MAX_SYSTEM_PROMPT_LENGTH)
+
+    const padded = updateConversationSchema.safeParse({ systemPrompt: `  ${exact}  ` })
+    expect(padded.success && 'systemPrompt' in padded.data && padded.data.systemPrompt).toBe(
+      exact,
+    )
+
+    expect(
+      updateConversationSchema.safeParse({
+        systemPrompt: 'a'.repeat(MAX_SYSTEM_PROMPT_LENGTH + 1),
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a system prompt sent alongside any other intent', () => {
+    // The pairing a "save prompt and rename" button would produce, and the one
+    // strict is here to refuse rather than silently answer as a rename.
+    expect(
+      updateConversationSchema.safeParse({ systemPrompt: 'Be terse.', title: 'Both' })
+        .success,
+    ).toBe(false)
+    expect(
+      updateConversationSchema.safeParse({ systemPrompt: null, archived: true }).success,
     ).toBe(false)
   })
 
