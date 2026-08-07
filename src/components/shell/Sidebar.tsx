@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/sidebar/ConversationList'
 import { ConversationListSkeleton } from '@/components/sidebar/ConversationListSkeleton'
 import { CollapseToggle } from '@/components/shell/CollapseToggle'
+import { ShowArchivedToggle } from '@/components/shell/ShowArchivedToggle'
 import { SidebarFooter } from '@/components/shell/SidebarFooter'
 
 import type { ConversationSummary, ShellUser } from '@/types/domain'
@@ -15,6 +16,12 @@ type SidebarProps = {
   user: ShellUser
   /** Still in flight. Awaited inside the Suspense boundary below, never here. */
   conversations: Promise<ConversationSummary[]>
+  /**
+   * Whether the promise above was asked for archived rows. Passed down rather
+   * than derived, because the layout already read the cookie to build the
+   * query and a second reading could disagree with it. (F22)
+   */
+  showArchived: boolean
 }
 
 /**
@@ -30,7 +37,7 @@ type SidebarProps = {
  * inside the mobile drawer. Only one is ever visible, so nothing here may
  * assume it is unique on the page — no ids, no autofocus.
  */
-export function Sidebar({ user, conversations }: SidebarProps) {
+export function Sidebar({ user, conversations, showArchived }: SidebarProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
       <div className="flex items-center justify-between gap-sm p-sm">
@@ -59,6 +66,13 @@ export function Sidebar({ user, conversations }: SidebarProps) {
           <ConversationList conversations={conversations} />
         </Suspense>
       </nav>
+
+      {/* Above the account row and outside the scrolling <nav>, so revealing
+          archived conversations does not require scrolling to the bottom of the
+          list they are about to be added to. */}
+      <div className="border-t border-hairline p-xs">
+        <ShowArchivedToggle showArchived={showArchived} />
+      </div>
 
       <SidebarFooter user={user} />
     </div>

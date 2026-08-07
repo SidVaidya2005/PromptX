@@ -1,6 +1,12 @@
 import { cookies } from 'next/headers'
 
-import { COLLAPSED, RAIL_COOKIE, SIDEBAR_COOKIE } from '@/lib/constants'
+import {
+  ARCHIVED_COOKIE,
+  COLLAPSED,
+  RAIL_COOKIE,
+  SHOW_ARCHIVED,
+  SIDEBAR_COOKIE,
+} from '@/lib/constants'
 import { resolveDisplayName } from '@/lib/utils'
 
 import { requireUser } from '@/server/auth'
@@ -35,14 +41,23 @@ export default async function AppLayout({
 }>) {
   const user = await requireUser()
 
+  // Read before the query rather than beside it, because F22 made the query
+  // depend on it: `includeArchived` decides which rows come back, so it has to
+  // be known before the request is issued. This costs nothing — cookies() reads
+  // the incoming request rather than going anywhere — and the two database
+  // round trips below still overlap, which is what the original arrangement was
+  // actually protecting.
+  const cookieStore = await cookies()
+  const showArchived = cookieStore.get(ARCHIVED_COOKIE)?.value === SHOW_ARCHIVED
+
   // Started here and deliberately NOT awaited. The sidebar awaits it inside a
   // Suspense boundary, so the three-column frame paints while the query is
   // still in flight — and the query itself is already running by then, rather
   // than starting once the shell has rendered. The fetch lives in this file
   // because nothing under src/components/ may import from src/server/.
-  const conversations = listConversations()
+  const conversations = listConversations(showArchived)
 
-  const [profile, cookieStore] = await Promise.all([getProfile(), cookies()])
+  const profile = await getProfile()
 
   // A missing profile row is recoverable. The handle_new_user trigger should
   // make it unreachable, but the session already carries an address, so there
@@ -58,7 +73,13 @@ export default async function AppLayout({
     // tooltips, and a provider there would ship to every signed-out visitor.
     <TooltipProvider>
       <AppShell
-        sidebar={<Sidebar user={shellUser} conversations={conversations} />}
+        sidebar={
+          <Sidebar
+            user={shellUser}
+            conversations={conversations}
+            showArchived={showArchived}
+          />
+        }
         rail={<OutlineRail />}
         sidebarCollapsed={cookieStore.get(SIDEBAR_COOKIE)?.value === COLLAPSED}
         railCollapsed={cookieStore.get(RAIL_COOKIE)?.value === COLLAPSED}

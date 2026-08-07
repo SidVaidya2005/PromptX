@@ -279,3 +279,19 @@ export const EXPANDED = 'expanded'
 
 /** One year. A layout preference has no reason to expire mid-session. */
 export const COLLAPSE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+
+/**
+ * Whether the sidebar reveals archived conversations. (F22)
+ *
+ * Same mechanism as the two above and one important difference: those cookies
+ * only decide *markup*, and the client already holds the same state, so their
+ * server re-render is cosmetic. This one decides which **query** the layout
+ * runs — `listConversations(includeArchived)` — so writing it must be followed
+ * by `router.refresh()` or the list on screen answers the old question.
+ *
+ * Only SHOW_ARCHIVED is tested for, so a missing cookie hides archived rows.
+ * That is the right default in the safe direction: a value nobody has written
+ * yet cannot reveal something the user filed away.
+ */
+export const ARCHIVED_COOKIE = 'px_archived'
+export const SHOW_ARCHIVED = 'shown'
