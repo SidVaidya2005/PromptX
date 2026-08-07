@@ -57,6 +57,7 @@ export async function ConversationList({
                 title={conversation.title}
                 updatedAt={conversation.updated_at}
                 relativeTime={formatRelativeTime(conversation.updated_at, now)}
+                pinnedAt={conversation.pinned_at}
               />
             ))}
           </ul>
