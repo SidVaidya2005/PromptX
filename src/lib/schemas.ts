@@ -424,6 +424,15 @@ export const conversationSystemPromptSchema = z
   .strict()
 
 /**
+ * The `?format=` on `GET /api/conversations/[id]/export`. (F34)
+ *
+ * An enum rather than a free string, so an unrecognised format is a 400 the
+ * route never has to think about — and so the value that decides both the
+ * `Content-Type` and the file extension can only ever be one of two things.
+ */
+export const exportFormatSchema = z.enum(['markdown', 'json'])
+
+/**
  * Publishing a conversation to a public link, or revoking it. (F33)
  *
  * Desired state rather than a toggle, for the reason the pin and the archive
