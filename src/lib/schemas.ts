@@ -9,6 +9,10 @@
 import { z } from 'zod'
 
 import {
+  MAX_PROMPT_BODY_LENGTH,
+  MAX_PROMPT_TAG_LENGTH,
+  MAX_PROMPT_TAGS,
+  MAX_PROMPT_TITLE_LENGTH,
   MAX_SYSTEM_PROMPT_LENGTH,
   MAX_TITLE_LENGTH,
   PROVIDER_KEY_LABEL_MAX_LENGTH,
@@ -319,6 +323,76 @@ export const createKeySchema = z.object({
 })
 
 export type CreateKeyInput = z.infer<typeof createKeySchema>
+
+/**
+ * The tags on a saved prompt, as they arrive and as they are stored. (F24)
+ *
+ * `build-plan.md` §24 asks for tags "normalised to lowercase and deduplicated on
+ * save", and this is the only place that happens — the chip input in the dialog
+ * is convenience, never the guard, the same division `conversationRenameSchema`
+ * makes about whitespace.
+ *
+ * **The order of these five lines is the whole schema.** Element checks run
+ * first, so each tag is trimmed and lowercased before anything looks at it; then
+ * the array-level checks run in declaration order, which F21 measured on this
+ * same zod version. `.overwrite()` is what makes that possible — unlike
+ * `.transform()`, it preserves the schema type, so `.max()` can still be chained
+ * after it and therefore counts the **deduplicated** tags. Reversed, `['api',
+ * 'API', 'api ']` would be three tags against the cap and one in the database.
+ *
+ * The two caps are not a duplicate. The first bounds what is *parsed* — an
+ * unbounded array is the denial-of-service vector an unbounded string is, and
+ * capping only the elements does not bound the whole. The second is the product
+ * rule: eight distinct tags on one prompt.
+ */
+const promptTagsSchema = z
+  .array(z.string().trim().toLowerCase().max(MAX_PROMPT_TAG_LENGTH))
+  .max(MAX_PROMPT_TAGS * 4)
+  // Empties are dropped rather than rejected: a stray separator is an authoring
+  // slip, not something worth failing a whole save over.
+  .overwrite((tags) => [...new Set(tags.filter((tag) => tag !== ''))])
+  .max(MAX_PROMPT_TAGS)
+
+/**
+ * The body of `POST /api/prompts`. (F24)
+ *
+ * `.trim()` before the length checks on both strings, for the reason F21
+ * measured: checks run in declaration order, so trim-first rejects `'   '` at
+ * `.min(1)` instead of storing `''`, and a pasted prompt is not rejected for
+ * whitespace it brought with it.
+ *
+ * `tags` is optional and defaults to empty, matching the column default. A
+ * prompt with no tags is the ordinary case, and requiring the key would make
+ * every caller send `[]` to say nothing.
+ */
+export const createPromptSchema = z
+  .object({
+    title: z.string().trim().min(1).max(MAX_PROMPT_TITLE_LENGTH),
+    body: z.string().trim().min(1).max(MAX_PROMPT_BODY_LENGTH),
+    tags: promptTagsSchema.optional().default([]),
+  })
+  .strict()
+
+export type CreatePromptInput = z.infer<typeof createPromptSchema>
+
+/**
+ * The body of `PATCH /api/prompts/[id]`. (F24)
+ *
+ * Deliberately **not** a union of strict branches, which is the shape
+ * `updateConversationSchema` has and the one this codebase reaches for by habit.
+ * That union exists because five genuinely separate intents — model, rename,
+ * pin, archive, system prompt — converge on one row and must not be confusable.
+ * A prompt has one intent: the dialog edits title, body and tags together and
+ * submits all three, so partial branches would be machinery with no caller and a
+ * second way to express "save this prompt" that nothing sends.
+ *
+ * Still `.strict()`, for the reason every schema here is: an ordinary zod object
+ * strips undeclared keys, so a body carrying a stray field would be answered as
+ * though it had been understood.
+ */
+export const updatePromptSchema = createPromptSchema
+
+export type UpdatePromptInput = z.infer<typeof updatePromptSchema>
 
 /**
  * The query of `DELETE /api/keys?provider=…`.

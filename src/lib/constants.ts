@@ -250,6 +250,42 @@ export const TITLE_TIMEOUT_MS = 15 * 1000
 export const TITLE_SOURCE_CHAR_LIMIT = 500
 
 /**
+ * Bounds on one saved prompt in the library. (F24)
+ *
+ * The body cap matches MAX_SYSTEM_PROMPT_LENGTH rather than being chosen
+ * independently, because the two are frequently the same string: F23's dialog
+ * can save its standing instruction straight into the library, and a library
+ * that accepted something the system-prompt field would then refuse would be a
+ * trap laid one feature apart.
+ *
+ * The title is longer than MAX_TITLE_LENGTH's 60. That figure is sized for a
+ * 260px sidebar row; a prompt title lives on a card in a grid and is the only
+ * thing the search box matches against, so squeezing it buys nothing.
+ */
+export const MAX_PROMPT_TITLE_LENGTH = 100
+export const MAX_PROMPT_BODY_LENGTH = 10_000
+
+/**
+ * Bounds on a prompt's tags.
+ *
+ * A cap on the count as well as the length, because `tags` is a `text[]` and an
+ * unbounded array is the same denial-of-service vector an unbounded string is —
+ * the cap on each element does not bound the whole.
+ */
+export const MAX_PROMPT_TAGS = 8
+export const MAX_PROMPT_TAG_LENGTH = 24
+
+/**
+ * How much of a prompt's body a card renders.
+ *
+ * `line-clamp-3` decides what is *seen*; this decides what is *rendered*, the
+ * distinction OUTLINE_ENTRY_CHAR_LIMIT records. A body may be 10,000 characters
+ * and the grid holds every prompt the user owns, so clamping only in CSS would
+ * put the whole library into the DOM to show three lines of each.
+ */
+export const PROMPT_BODY_PREVIEW_LENGTH = 220
+
+/**
  * How many user prompts a conversation needs before the outline rail appears.
  *
  * An exchange is one prompt, so the rail arrives when the third is *sent* rather

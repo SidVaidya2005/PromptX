@@ -25,6 +25,15 @@ export type Conversation = Tables<'conversations'>
 export type Message = Tables<'messages'>
 
 /**
+ * One saved prompt in the library. (F24)
+ *
+ * The whole row, unlike `ConversationSummary`, and the difference is what the
+ * page does with it: the grid renders a preview of `body` and filters on `tags`
+ * in the browser, so there is no column here the client does not use.
+ */
+export type Prompt = Tables<'prompts'>
+
+/**
  * The columns the sidebar actually renders.
  *
  * Deliberately narrower than the row. No CDN sits in front of the origin, so

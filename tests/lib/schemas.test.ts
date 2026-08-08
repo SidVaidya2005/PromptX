@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_SYSTEM_PROMPT_LENGTH, MAX_TITLE_LENGTH } from '@/lib/constants'
-import { chatRequestSchema, chatSendSchema, updateConversationSchema } from '@/lib/schemas'
+import {
+  MAX_PROMPT_BODY_LENGTH,
+  MAX_PROMPT_TAG_LENGTH,
+  MAX_PROMPT_TAGS,
+  MAX_PROMPT_TITLE_LENGTH,
+  MAX_SYSTEM_PROMPT_LENGTH,
+  MAX_TITLE_LENGTH,
+} from '@/lib/constants'
+import {
+  chatRequestSchema,
+  chatSendSchema,
+  createPromptSchema,
+  updateConversationSchema,
+} from '@/lib/schemas'
 
 const EDIT_ID = '11111111-2222-4333-8444-555555555555'
 
@@ -361,5 +373,116 @@ describe('updateConversationSchema', () => {
     // 'true' arriving from a hand-rolled fetch must not read as pinned.
     expect(updateConversationSchema.safeParse({ pinned: 'true' }).success).toBe(false)
     expect(updateConversationSchema.safeParse({ pinned: null }).success).toBe(false)
+  })
+})
+
+/**
+ * The tag rules are the only part of a prompt that is transformed rather than
+ * merely bounded, so they are the only part that can be wrong while looking
+ * right. Everything here is about the order the checks run in: element checks
+ * first, then `.overwrite()`, then the count — reversed at any point and the cap
+ * counts something different from what the database ends up holding.
+ */
+describe('createPromptSchema', () => {
+  const base = { title: 'Code review', body: 'Review this diff for bugs.' }
+
+  function tagsOf(input: unknown): string[] {
+    const parsed = createPromptSchema.safeParse(input)
+    if (!parsed.success) throw new Error('expected the prompt to parse')
+
+    return parsed.data.tags
+  }
+
+  it('lowercases, trims, and deduplicates tags into one', () => {
+    expect(tagsOf({ ...base, tags: [' Review ', 'review', 'REVIEW'] })).toEqual([
+      'review',
+    ])
+  })
+
+  it('drops empty and whitespace-only tags rather than storing them', () => {
+    expect(tagsOf({ ...base, tags: ['code', '', '   ', 'review'] })).toEqual([
+      'code',
+      'review',
+    ])
+  })
+
+  it('preserves the order the tags were given in', () => {
+    // A Set iterates in insertion order, which is what keeps the chips on a card
+    // in the order their author put them rather than in an arbitrary one.
+    expect(tagsOf({ ...base, tags: ['zebra', 'apple', 'mango'] })).toEqual([
+      'zebra',
+      'apple',
+      'mango',
+    ])
+  })
+
+  it('counts the cap against the deduplicated tags, not the submitted ones', () => {
+    // MAX_PROMPT_TAGS + 1 submitted, all the same tag. If `.max()` ran before
+    // `.overwrite()` this would be refused for holding nine tags while the
+    // database would have held exactly one.
+    const duplicates = Array.from({ length: MAX_PROMPT_TAGS + 1 }, () => 'review')
+
+    expect(tagsOf({ ...base, tags: duplicates })).toEqual(['review'])
+  })
+
+  it('refuses more than MAX_PROMPT_TAGS genuinely distinct tags', () => {
+    const distinct = Array.from({ length: MAX_PROMPT_TAGS + 1 }, (_, i) => `tag-${i}`)
+
+    expect(createPromptSchema.safeParse({ ...base, tags: distinct }).success).toBe(false)
+  })
+
+  it('refuses an array too long to be worth normalising at all', () => {
+    // The first cap, which exists for a different reason from the second: an
+    // unbounded array is the denial-of-service vector an unbounded string is,
+    // and every element being a duplicate does not make parsing it free.
+    const flood = Array.from({ length: MAX_PROMPT_TAGS * 4 + 1 }, () => 'review')
+
+    expect(createPromptSchema.safeParse({ ...base, tags: flood }).success).toBe(false)
+  })
+
+  it('refuses a single tag longer than the cap', () => {
+    expect(
+      createPromptSchema.safeParse({
+        ...base,
+        tags: ['x'.repeat(MAX_PROMPT_TAG_LENGTH + 1)],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('treats a missing tags key as no tags', () => {
+    expect(tagsOf(base)).toEqual([])
+  })
+
+  it('rejects a title or body that is nothing but whitespace', () => {
+    // `.trim()` is declared before `.min(1)`, so these fail rather than being
+    // stored as empty strings — a prompt with no name and nothing in it.
+    expect(createPromptSchema.safeParse({ ...base, title: '   ' }).success).toBe(false)
+    expect(createPromptSchema.safeParse({ ...base, body: '\n\t ' }).success).toBe(false)
+  })
+
+  it('accepts a title that is only within the cap once trimmed', () => {
+    const padded = `  ${'t'.repeat(MAX_PROMPT_TITLE_LENGTH)}  `
+    const parsed = createPromptSchema.safeParse({ ...base, title: padded })
+
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.title.length).toBe(MAX_PROMPT_TITLE_LENGTH)
+  })
+
+  it('refuses a body over the cap', () => {
+    expect(
+      createPromptSchema.safeParse({
+        ...base,
+        body: 'x'.repeat(MAX_PROMPT_BODY_LENGTH + 1),
+      }).success,
+    ).toBe(false)
+  })
+
+  it('refuses a body carrying a stray field', () => {
+    // Strict, for the reason every schema in this file is: an ordinary zod
+    // object strips what it does not declare, so a client sending `{id}` would
+    // be answered as though the id had been understood.
+    expect(
+      createPromptSchema.safeParse({ ...base, id: crypto.randomUUID() }).success,
+    ).toBe(false)
   })
 })
