@@ -3,20 +3,25 @@
 import { useRef, useState } from 'react'
 import Link from 'next/link'
 
-import { ArrowUpIcon, SquareIcon } from 'lucide-react'
+import { ArrowUpIcon, PaperclipIcon, SquareIcon } from 'lucide-react'
 
-import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
+import {
+  ALLOWED_ATTACHMENT_MIME_TYPES,
+  SHARED_KEY_DAILY_MESSAGE_LIMIT,
+} from '@/lib/constants'
 import { willUseSharedKey } from '@/lib/models'
 import { insertPromptAt } from '@/lib/prompts'
 import { cn } from '@/lib/utils'
 
+import { AttachmentChip } from '@/components/chat/AttachmentChip'
 import { ModelPicker } from '@/components/chat/ModelPicker'
 import { PromptPicker } from '@/components/chat/PromptPicker'
 import { QuotaMeter } from '@/components/chat/QuotaMeter'
 import { SystemPromptControl } from '@/components/chat/SystemPromptControl'
+import { useAttachmentUploads } from '@/components/chat/use-attachment-uploads'
 import { Button } from '@/components/ui/button'
 
-import type { Provider } from '@/types/domain'
+import type { Provider, RenderedAttachment } from '@/types/domain'
 
 type ComposerProps = {
   provider: Provider
@@ -31,7 +36,7 @@ type ComposerProps = {
   systemPrompt: string | null
   /** Surfaced inside the system prompt dialog; the mutation is owned by Chat. */
   systemPromptError: string | null
-  onSend: (text: string) => void
+  onSend: (text: string, attachments: readonly RenderedAttachment[]) => void
   onStop: () => void
   onSelectModel: (provider: Provider, modelId: string) => void
   onSaveSystemPrompt: (systemPrompt: string | null) => Promise<boolean>
@@ -61,6 +66,10 @@ export function Composer({
 }: ComposerProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const attachments = useAttachmentUploads()
 
   // Whether the allowance applies at all is a property of the SELECTED model,
   // not of the user. Someone with an OpenRouter key who has spent their shared
@@ -78,16 +87,46 @@ export function Composer({
   // because they say different things and the composer has to say the right one.
   const blocked = exhausted || budgetSpent
 
-  const canSend = text.trim().length > 0 && !isStreaming && !blocked
+  /**
+   * An unfinished or failed upload blocks the send rather than being dropped
+   * from it. (F29)
+   *
+   * §29 is explicit that a failed upload "blocks send with a clear message
+   * rather than sending without it". Sending the message minus the file somebody
+   * attached to it is the one outcome that would look like the application
+   * working — the answer would simply be about the wrong thing.
+   *
+   * The server refuses the same request independently, on the rows rather than
+   * on this state, so this is the affordance agreeing with the rule rather than
+   * being it.
+   */
+  const waitingOnUploads = attachments.isUploading || attachments.hasFailed
+
+  const canSend =
+    text.trim().length > 0 && !isStreaming && !blocked && !waitingOnUploads
 
   function submit() {
     if (!canSend) return
 
-    onSend(text)
+    // The ready rows in chip order, which is the order they will be linked in
+    // and the order they will render in — `position` comes from this array.
+    onSend(text, attachments.readyAttachments)
     setText('')
+    attachments.clear()
 
     const textarea = textareaRef.current
     if (textarea) textarea.style.height = 'auto'
+  }
+
+  function chooseFiles(list: FileList | null) {
+    if (!list || list.length === 0) return
+
+    attachments.add(Array.from(list))
+
+    // Cleared so choosing the SAME file again still fires a change event. An
+    // input that keeps its value is silent on the second attempt, which reads as
+    // the button being broken.
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function handleChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
@@ -180,18 +219,85 @@ export function Composer({
         )
       )}
 
+      {/* A rejection never becomes a chip, so it has nowhere else to be said.
+          Above the composer with the quota sentences, for the same reason: it is
+          a sentence, not a control. */}
+      {attachments.error && (
+        <p role="status" className="pb-sm text-body-sm text-danger">
+          {attachments.error}
+        </p>
+      )}
+
+      {/* Why the send button is disabled, said out loud. A disabled control with
+          no explanation is the version of this that gets reported as a bug. The
+          quota sentences win when both apply — they are the harder wall. */}
+      {!blocked && attachments.hasFailed && (
+        <p role="status" className="pb-sm text-body-sm text-danger">
+          One of those files didn&rsquo;t upload. Retry it or remove it to send.
+        </p>
+      )}
+
+      {!blocked && !attachments.hasFailed && attachments.isUploading && (
+        <p role="status" className="pb-sm text-body-sm text-mute">
+          Waiting for your files to finish uploading&hellip;
+        </p>
+      )}
+
       <form
         onSubmit={(event) => {
           event.preventDefault()
           submit()
+        }}
+        // Drag-and-drop is scoped to the composer rather than the window. A
+        // page-wide drop zone would swallow drags meant for anything else, and
+        // the thread above is a scrolling surface people drag on already.
+        onDragOver={(event) => {
+          if (blocked) return
+
+          // Both of these are required for a drop to fire at all: the default
+          // action for a dragover is "refuse the drop", so not preventing it
+          // means onDrop never runs and the browser navigates to the file.
+          event.preventDefault()
+          setIsDragging(true)
+        }}
+        onDragLeave={(event) => {
+          // Only when the pointer has actually left the form. Dragging across a
+          // child fires dragleave on the parent, which would otherwise flicker
+          // the highlight the entire way in.
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+
+          setIsDragging(false)
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          setIsDragging(false)
+
+          if (!blocked) chooseFiles(event.dataTransfer.files)
         }}
         className={cn(
           // DESIGN.md `composer`: canvas-soft fill, hairline border, rounded-md,
           // 10px padding, and the border brightening to mute on focus-within.
           'rounded-md border border-hairline bg-canvas-soft p-md transition-colors',
           'focus-within:border-mute',
+          // The drop state reuses the focus treatment rather than introducing a
+          // colour. DESIGN.md has no token for "a file is over this", and the
+          // state-only tokens are reserved for things going wrong.
+          isDragging && 'border-mute',
         )}
       >
+        {attachments.items.length > 0 && (
+          <ul className="flex flex-wrap gap-sm pb-sm">
+            {attachments.items.map((item) => (
+              <AttachmentChip
+                key={item.localId}
+                attachment={item}
+                onRemove={attachments.remove}
+                onRetry={attachments.retry}
+              />
+            ))}
+          </ul>
+        )}
+
         <textarea
           ref={textareaRef}
           value={text}
@@ -225,6 +331,37 @@ export function Composer({
               predicted. Wrapping lets the meter drop to its own line at narrow
               widths and changes nothing at desktop, where all three fit. */}
           <div className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xs">
+            {/* DESIGN.md's `composer-toolbar` names the attach button, and this
+                is it. The input is the real control and the button is its
+                label — a bare file input cannot be styled to this system, and
+                wrapping it in a <label> would lose the keyboard behaviour a
+                button already has. */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ALLOWED_ATTACHMENT_MIME_TYPES.join(',')}
+              onChange={(event) => chooseFiles(event.target.files)}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden
+            />
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              // Mid-stream for the same reason as the controls beside it: the
+              // request in flight cannot gain an attachment, and offering it
+              // would imply otherwise. Feature 30 adds the other gate, on models
+              // that accept no files at all.
+              disabled={isStreaming || blocked}
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach a file"
+            >
+              <PaperclipIcon />
+            </Button>
+
             <ModelPicker
               provider={provider}
               modelId={modelId}

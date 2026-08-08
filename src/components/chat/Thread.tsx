@@ -2,10 +2,14 @@ import type { ChatMessage } from '@/lib/messages'
 
 import { MessageBubble } from '@/components/chat/MessageBubble'
 
-import type { Provider } from '@/types/domain'
+import type { Provider, RenderedAttachment } from '@/types/domain'
+
+/** Message id to its files. Keyed rather than folded into the messages: see Chat. */
+export type AttachmentsByMessage = Readonly<Record<string, RenderedAttachment[]>>
 
 type ThreadProps = {
   messages: readonly ChatMessage[]
+  attachments: AttachmentsByMessage
   /** True while a response is in flight. Applies to the last message only. */
   isStreaming: boolean
   /** The composer's model, for a live message with no metadata of its own. */
@@ -31,6 +35,7 @@ type ThreadProps = {
  */
 export function Thread({
   messages,
+  attachments,
   isStreaming,
   provider,
   modelId,
@@ -50,6 +55,7 @@ export function Thread({
           <MessageBubble
             key={message.id}
             message={message}
+            attachments={attachments[message.id] ?? EMPTY}
             // Only the final assistant message can be the one being generated;
             // everything above it is settled and should highlight immediately.
             isStreaming={isStreaming && isLast && message.role === 'assistant'}
@@ -78,3 +84,6 @@ export function Thread({
     </div>
   )
 }
+
+/** One frozen empty array, so a message without files gets a stable prop. */
+const EMPTY: readonly RenderedAttachment[] = []

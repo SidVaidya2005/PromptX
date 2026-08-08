@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { JUMP_TO_MESSAGE_PARAM, SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 import { toUIMessages } from '@/lib/messages'
 
+import { attachmentsByMessage } from '@/server/attachments'
 import { getConversation } from '@/server/data/conversations'
 import { listByConversation } from '@/server/data/messages'
 import { listProviderKeys } from '@/server/data/provider-keys'
@@ -50,6 +51,10 @@ export default async function ConversationPage({
     isSharedKeyAvailable(),
   ])
 
+  // After the thread, because it needs the message ids — one query and one
+  // signing call for the whole conversation rather than either per message. (F29)
+  const attachments = await attachmentsByMessage(messages)
+
   return (
     <Chat
       // Pins a remount to the conversation id. Measured as redundant today —
@@ -63,6 +68,7 @@ export default async function ConversationPage({
       key={conversation.id}
       conversationId={conversation.id}
       initialMessages={toUIMessages(messages)}
+      initialAttachments={attachments}
       provider={conversation.provider}
       modelId={conversation.model_id}
       configuredProviders={keys.map((key) => key.provider)}

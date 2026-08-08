@@ -17,11 +17,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { MessageAttachments } from '@/components/chat/MessageAttachments'
 import { Button } from '@/components/ui/button'
+
+import type { RenderedAttachment } from '@/types/domain'
 
 type UserMessageProps = {
   id: string
   text: string
+  /** The files sent with this message, in position order. Empty for most. */
+  attachments: readonly RenderedAttachment[]
   /** True for the brief flash after the outline rail jumps to this message. */
   isHighlighted: boolean
   /** False while a response is streaming — one generation at a time. */
@@ -44,6 +49,7 @@ type UserMessageProps = {
 export function UserMessage({
   id,
   text,
+  attachments,
   isHighlighted,
   canEdit,
   followingCount,
@@ -168,6 +174,16 @@ export function UserMessage({
 
   return (
     <div id={outlineAnchorId(id)} className="group flex scroll-mt-lg flex-col items-end">
+      {/* Above the text, matching the bubble's own measure. An attachment is
+          context for the sentence under it, and a picture arriving after the
+          question it illustrates reads backwards — the same order the model is
+          sent them in. */}
+      {attachments.length > 0 && (
+        <div className="w-full max-w-4/5">
+          <MessageAttachments attachments={attachments} />
+        </div>
+      )}
+
       <div
         className={cn(
           'max-w-4/5 rounded-md border border-hairline bg-canvas-soft px-lg py-md',

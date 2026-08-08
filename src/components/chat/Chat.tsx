@@ -11,18 +11,26 @@ import type { ChatMessage } from '@/lib/messages'
 import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 
 import { Composer } from '@/components/chat/Composer'
-import { Thread } from '@/components/chat/Thread'
+import { Thread, type AttachmentsByMessage } from '@/components/chat/Thread'
 import { useModelMutation } from '@/components/chat/use-model-mutation'
 import { useConversationMutation } from '@/components/sidebar/use-conversation-mutation'
 import { useOutlineTracking } from '@/components/chat/use-outline-tracking'
 import { useOutlinePublisher } from '@/components/shell/use-outline'
 
-import type { Provider } from '@/types/domain'
+import type { Provider, RenderedAttachment } from '@/types/domain'
 
 type ChatProps = {
   /** Null on /chat. The server creates the conversation as the first answer streams. */
   conversationId: string | null
   initialMessages: ChatMessage[]
+  /**
+   * The thread's files, keyed by message id and signed for this render. (F29)
+   *
+   * Beside the messages rather than inside them, because a message sent moments
+   * ago exists only in `useChat` state — no server render can reach it to add
+   * parts, and `router.refresh()` does not touch that state either.
+   */
+  initialAttachments: AttachmentsByMessage
   provider: Provider
   modelId: string
   /** Providers this user holds a key for, for the picker's disabled states. */
@@ -63,6 +71,7 @@ type ChatProps = {
 export function Chat({
   conversationId,
   initialMessages,
+  initialAttachments,
   provider,
   modelId,
   configuredProviders,
@@ -83,6 +92,23 @@ export function Chat({
    * until `onFinish` puts it where it belongs.
    */
   const persistedPromptId = useRef<string | null>(null)
+
+  /**
+   * The thread's files, keyed by message id. (F29)
+   *
+   * Seeded from the server and then added to optimistically: on send, the entry
+   * is keyed to the id the client just minted for its own copy of the message,
+   * because that is the id the thread is rendering under. When the server
+   * reports which row the prompt became, this map is re-keyed alongside the
+   * message — the same move `adoptPersistedPromptId()` already makes, for the
+   * same reason, which is why the two happen together.
+   *
+   * The URLs come from the confirm call rather than from object URLs held here,
+   * so nothing in this component owns a resource it has to remember to revoke.
+   */
+  const [attachments, setAttachments] =
+    useState<AttachmentsByMessage>(initialAttachments)
+
   const [model, setModel] = useState({ provider, modelId })
   const { changeModel, error: modelError } = useModelMutation()
 
@@ -302,10 +328,61 @@ export function Chat({
       const prompt = current[index]
       if (!prompt || prompt.id === persisted) return current
 
+      // The attachment map is keyed by message id, so it has to move with the
+      // message. Missing this would leave a just-sent image rendering under an
+      // id nothing in the thread has any more — the picture would simply vanish
+      // the moment the answer finished. (F29)
+      setAttachments((currentAttachments) => {
+        const files = currentAttachments[prompt.id]
+        if (!files) return currentAttachments
+
+        const next = { ...currentAttachments, [persisted]: files }
+        delete next[prompt.id]
+        return next
+      })
+
       const next = [...current]
       next[index] = { ...prompt, id: persisted }
       return next
     })
+  }
+
+  /**
+   * Sends a message, with whatever the composer had attached to it. (F29)
+   *
+   * The id is minted here rather than left to the SDK, because the attachment
+   * map is keyed by message id and the map has to be written *before* the
+   * message exists on screen — otherwise the images appear a beat late, or not
+   * until the answer finishes.
+   *
+   * **It is passed as a whole message object, not as `sendMessage`'s
+   * `messageId` option**, and the difference was measured off the installed SDK
+   * rather than assumed: `messageId` is strictly a *replace* primitive. It looks
+   * up the id, **throws** when it is not already in the thread, and truncates
+   * everything after it — which is exactly right for F19's edit and exactly
+   * wrong here. The object form takes the other branch, where `id` is used as
+   * given.
+   *
+   * `position` is overwritten with the chip order. A freshly confirmed row
+   * carries the column default, so every optimistic attachment would otherwise
+   * claim position 0 and the render order would rest on sort stability.
+   */
+  function send(text: string, files: readonly RenderedAttachment[]) {
+    const messageId = crypto.randomUUID()
+
+    if (files.length > 0) {
+      setAttachments((current) => ({
+        ...current,
+        [messageId]: files.map((file, index) => ({ ...file, position: index })),
+      }))
+    }
+
+    void sendMessage(
+      { id: messageId, role: 'user', parts: [{ type: 'text', text }] },
+      files.length > 0
+        ? { body: { attachmentIds: files.map((file) => file.id) } }
+        : undefined,
+    )
   }
 
   /**
@@ -507,6 +584,7 @@ export function Chat({
         ) : (
           <Thread
             messages={messages}
+            attachments={attachments}
             isStreaming={isStreaming}
             provider={model.provider}
             modelId={model.modelId}
@@ -554,7 +632,7 @@ export function Chat({
         systemPrompt={systemPrompt}
         systemPromptError={systemPromptError}
         onSaveSystemPrompt={saveSystemPrompt}
-        onSend={(text) => void sendMessage({ text })}
+        onSend={send}
         onStop={() => void stop()}
       />
     </div>

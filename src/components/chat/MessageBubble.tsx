@@ -3,10 +3,12 @@ import type { ChatMessage } from '@/lib/messages'
 import { AssistantMessage } from '@/components/chat/AssistantMessage'
 import { UserMessage } from '@/components/chat/UserMessage'
 
-import type { Provider } from '@/types/domain'
+import type { Provider, RenderedAttachment } from '@/types/domain'
 
 type MessageBubbleProps = {
   message: ChatMessage
+  /** The files this message was sent with. Only user messages ever have any. */
+  attachments: readonly RenderedAttachment[]
   /** True only for the response currently being generated. */
   isStreaming: boolean
   /** The composer's model, used for a live message that has no metadata yet. */
@@ -42,6 +44,7 @@ type MessageBubbleProps = {
  */
 export function MessageBubble({
   message,
+  attachments,
   isStreaming,
   fallbackProvider,
   fallbackModelId,
@@ -71,6 +74,7 @@ export function MessageBubble({
       <UserMessage
         id={message.id}
         text={text}
+        attachments={attachments}
         isHighlighted={isHighlighted}
         canEdit={canEdit}
         followingCount={followingCount}

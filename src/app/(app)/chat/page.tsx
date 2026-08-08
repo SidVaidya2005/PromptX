@@ -36,6 +36,9 @@ export default async function ChatPage() {
     <Chat
       conversationId={null}
       initialMessages={[]}
+      // Nothing has been sent yet, so nothing can have files. The map fills in
+      // client-side as soon as one is attached and sent. (F29)
+      initialAttachments={{}}
       provider="google"
       modelId={SHARED_MODEL_ID}
       configuredProviders={keys.map((key) => key.provider)}
