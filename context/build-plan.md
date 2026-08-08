@@ -737,10 +737,20 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 **Logic:**
 
-- `/api/compare/route.ts` resolving both models independently
-- Two `streamText` calls multiplexed into one response, tagged `left` and `right`
-- Each side quota-checked separately; one side may be refused while the other proceeds
+- `/api/compare/route.ts` resolving one model per request, through `resolveModel()` like every other generation
+- Each column posts its own request, so each is quota-checked separately; one may be refused while the other proceeds
 - **No conversation and no messages are persisted.** Nothing appears in the sidebar and nothing is recoverable after leaving the page. The quota ledgers are the deliberate exception: a shared-key comparison reserves and reconciles on both sides, because two real provider calls were made and someone paid for them
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **Two independent POSTs, not one multiplexed response.** This section and `architecture.md`'s data flow both said "two `streamText` calls multiplexed into one response, tagged `left` and `right`" until F31, and the same section asked for independent stop controls and a per-column error state — which one response cannot give. One response carries one `request.signal`, so a per-column stop could only stop *rendering* while the provider kept generating and billing, the exact failure F08 composed its abort signal to prevent; and a per-column refusal could not be an HTTP status, so `quota_exceeded` would have to be smuggled into a 200 as a data part. Two requests give independent stop, independent 400/429/503 and independent quota with no new machinery. The server never hears the words `left` and `right` — the side is a client concept
+- **The reconciliation sweep has to learn about slots that produce no message row, or the daily cap does not apply here at all.** `reconcile_shared_key_usage()` sets `message_count` to the number of complete shared-key assistant messages for that day, on any row untouched for five minutes. A comparison persists nothing, so every slot it claimed would be handed back within ten minutes and `/compare` would spend the shared key without bound. A migration adds `shared_key_usage.compare_count`, moved inside the same atomic statement as `message_count`, and the sweep's `actual` becomes `messages + compare_count`. `message_count` stays the single enforcement counter, so chat and compare share one allowance and `getTodaysUsage()` needs no change. The cost, stated rather than hidden: a compare slot orphaned by a dead process no longer self-heals in ten minutes — the row is per `usage_date`, so it clears at 00:00 UTC
+- **`resolveModel()` takes the flag rather than the route claiming its own slot.** An options argument, `{ persisted: false }`, passed through to `reserveSharedSlot`. Keeping the reservation inside `resolveModel()` is what preserves the invariant that no route constructs a provider client or claims a slot directly
+- **The model-error mapping is extracted, not copied.** `modelErrorPayload()` in `src/server/providers.ts`, which owns the error classes, returns `{ status, body }` for the four refusals and null for anything else. It returns data rather than a `Response` so that shaping the response stays in the route, where `code-standards.md` puts it. `/api/chat` moves onto it in the same change
+- **One `useChat` per column**, `compare-left` and `compare-right`, each with its own transport. `status`, `stop` and `error` are already per instance, which is the whole reason two requests are cheap to consume
+- **The right column defaults to the first available model that is not the left one**, falling back to the shared model when the user holds no keys. Both defaulting to `SHARED_MODEL_ID` would make the out-of-the-box action a comparison of one model against itself, for two of twenty daily messages
+- **No attachments and no system prompt.** §31 names one prompt input, so F30's capability gate has nothing to gate here
+- **A consequence for §32, recorded now rather than discovered then:** with nothing persisted, "Continue with this one" has to send the server an assistant answer it never stored, which brushes against the invariant that history is never taken from the request body. §31 only needs to hold the prompt and both answers in client state
 
 ### 32 Promote a comparison
 

@@ -336,6 +336,30 @@ The `where` clause on the `do update` branch is what closes the window: under
 concurrency Postgres serialises the two updates on the same row, and the second
 one matches no row and returns nothing.
 
+**A slot that produces no message row has to be counted separately.** The
+reconciliation sweep sets `message_count` to the number of complete shared-key
+assistant messages for that day, on any row untouched for five minutes —
+`messages` is its source of truth. The compare view persists nothing, so without
+help the sweep would refund every slot a comparison claimed within ten minutes
+and the daily cap would not apply to `/compare` at all. `shared_key_usage`
+therefore carries a second counter:
+
+```
+reserve_shared_slot(userId, limit, persisted := true)
+  └─► the SAME single statement also does
+         compare_count = compare_count + (case when persisted then 0 else 1 end)
+
+reconcile_shared_key_usage()
+  └─► actual := (count of complete shared-key assistant messages)
+                + compare_count          ← the slots with no row to count
+```
+
+`message_count` remains the only counter enforcement is tested against, so chat
+and compare share one allowance and `getTodaysUsage()` reads the same column it
+always did. The tradeoff is that a compare slot orphaned by a dead process is no
+longer self-healed by the sweep; the row is keyed by `usage_date`, so it clears
+at 00:00 UTC. (F31)
+
 ### Storing a provider key
 
 ```
@@ -398,16 +422,32 @@ Read-only thread. No composer, no model picker, no owner identity.
 
 ### Comparing two models
 
+**One request per column, not one multiplexed response.** This diagram showed a
+single POST carrying both sides until F31. One response carries one
+`request.signal`, so a per-column stop could only stop *rendering* while the
+provider kept generating and billing — and a per-column refusal could not be an
+HTTP status. Two requests give independent stop, independent 4xx/5xx and
+independent quota. The server never hears `left` or `right`; the side is a
+client concept.
+
 ```
 /compare (Client Component)
-  │  POST /api/compare  { prompt, left: {provider, modelId}, right: {…} }
+  │  two useChat instances, one per column
+  │  POST /api/compare  { prompt, provider, modelId }      ← left
+  │  POST /api/compare  { prompt, provider, modelId }      ← right
   ▼
-src/app/api/compare/route.ts
-  ├─► requireUser()
-  ├─► resolveModel() for each side, independently quota-checked
-  ├─► two streamText calls, merged into one multiplexed stream tagged left/right
+src/app/api/compare/route.ts          (one generation, no writes at all)
+  ├─► requireUser()                             → 401
+  ├─► zod-parse the body                        → 400
+  ├─► resolveModel(user, provider, modelId, { persisted: false })
+  │     └─ shared key path → reserveSharedSlot, claiming a slot that will
+  │        never be backed by a messages row — see "Quota reservation"
   ▼
-Two streaming columns. NOTHING is persisted.
+streamText({ model, messages: [the prompt], abortSignal })
+  ├─► onEnd:            reconcile token usage into the ledgers
+  └─► onError / abort:  releaseSharedSlot(user, { persisted: false })
+  ▼
+One streaming column. NOTHING is persisted.
   │
   └─► "Continue with this one" → POST /api/chat creates a real conversation
         seeded with the prompt and the chosen answer
@@ -1510,6 +1550,7 @@ infer that a pointer is fine.
 - Title generation reaches the shared key through `sharedTitleModel()`, never through `resolveModel()`. The separation is what makes the rule above structural rather than remembered: `resolveModel()` is where the quota reservation lives, so a titling path that shared it would begin claiming slots the moment feature 16 lands, silently. `sharedTitleModel()` takes no user id, so there is no one to charge. (F10)
 - `shared_key_budget` records measured token usage only. When a provider call fails without reporting usage, nothing is written and a warning is logged — an estimate must never enter a ledger that drives a circuit breaker.
 - The reconciliation sweep may only lower `message_count`, and only on rows untouched for longer than the maximum request duration. A job that can raise the counter, or that ignores the staleness guard, would charge users for in-flight requests.
+- A shared-key slot claimed for a generation that will never be persisted is counted in `shared_key_usage.compare_count`, inside the same atomic statement that claims it, and the reconciliation sweep adds that counter to the message count it reconciles against. The sweep derives truth from `messages`, so any future caller that spends the shared key without writing a row must do the same or the daily cap silently stops applying to it. (F31)
 - Every provider call is bounded by `STREAM_TIMEOUT_MS` via an `AbortSignal`. Render permits a 100-minute request, so nothing in the platform will stop a hung provider connection — the application must, or a stuck stream holds a reservation and a process slot indefinitely.
 - `/share/[slug]` is never cached: `force-dynamic`, `no-store`, and excluded from `cacheComponents`. Revocation must be immediate.
 
