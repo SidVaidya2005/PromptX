@@ -350,6 +350,19 @@ export type Database = {
         Args: { p_limit: number; p_user_id: string }
         Returns: number
       }
+      search_has_terms: { Args: { query: string }; Returns: boolean }
+      search_messages: {
+        Args: { query: string; result_limit?: number }
+        Returns: {
+          conversation_id: string
+          conversation_title: string
+          created_at: string
+          message_id: string
+          rank: number
+          role: Database["public"]["Enums"]["message_role"]
+          snippet: string
+        }[]
+      }
     }
     Enums: {
       message_role: "user" | "assistant"
