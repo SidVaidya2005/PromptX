@@ -112,12 +112,23 @@ export function Compare({
    */
   function promoteSide(side: 'left' | 'right') {
     const column = side === 'left' ? left : right
-    const model = side === 'left' ? leftModel : rightModel
 
-    // Both are guaranteed by the button only rendering on a settled column, and
-    // checked anyway: `code-standards.md` allows no `!` here, and a promotion
+    /**
+     * **The model that produced this answer, never the picker's current value.**
+     *
+     * Found at the Phase 6 checkpoint and reproduced end to end. The picker is
+     * enabled the moment a column settles, so switching it after a run leaves the
+     * old answer on screen — and reading `leftModel` here persisted that answer
+     * under a model which had never been called: a Gemini reply stored as
+     * `openrouter / anthropic/claude-sonnet-5`. `architecture.md` forbids it in
+     * as many words, and F33 would publish it to anyone with the link.
+     */
+    const model = column.answeredWith
+
+    // All three are guaranteed by the button only rendering on a settled column,
+    // and checked anyway: `code-standards.md` allows no `!` here, and a promotion
     // with an empty answer would be refused by the schema after a round trip.
-    if (!asked || !column.answer) return
+    if (!asked || !column.answer || !model) return
 
     setPromotedSide(side)
 

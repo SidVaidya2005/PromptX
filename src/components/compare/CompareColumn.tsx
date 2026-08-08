@@ -149,6 +149,19 @@ export function CompareColumn({
                   'pointer-coarse:opacity-100',
                 )}
               >
+                {/**
+                 * **Which model actually wrote this**, which is not always what
+                 * the picker above now says. (Phase 6 checkpoint)
+                 *
+                 * The picker is enabled once a column settles, so it describes
+                 * the *next* run; this describes the answer being read. Before
+                 * this line the two were assumed to agree, and switching models
+                 * after a run silently relabelled an answer — the same
+                 * `modelId` line `AssistantMessage` carries in the thread, and
+                 * for the same reason.
+                 */}
+                {column.answeredWith && <span>{column.answeredWith.modelId}</span>}
+
                 {/* The raw markdown, not the rendered text — pasting an answer
                     into an editor should give back its fences. */}
                 <CopyButton value={column.answer} label="Copy this answer" />

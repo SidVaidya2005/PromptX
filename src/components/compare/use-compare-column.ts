@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
@@ -15,6 +15,20 @@ export type CompareSide = 'left' | 'right'
 export type CompareColumnState = {
   /** The answer so far. Empty until the first token arrives. */
   answer: string
+  /**
+   * The model that actually produced `answer`, captured at send. Null before the
+   * first run. (Phase 6 checkpoint)
+   *
+   * **Not the same thing as the picker's current selection**, and conflating the
+   * two was a real defect rather than a hypothetical one. The picker is enabled
+   * the moment a column settles, so changing it leaves the previous answer on
+   * screen under a model that never wrote it — and F32's promote read the picker,
+   * so the mislabelling was persisted: reproduced end to end, a Gemini answer
+   * stored as `openrouter / anthropic/claude-sonnet-5`, which
+   * `architecture.md` forbids outright ("every assistant message records the
+   * provider and model that actually produced it") and F33 would publish.
+   */
+  answeredWith: { provider: Provider; modelId: string } | null
   isStreaming: boolean
   /** A refusal or failure, already unwrapped into a sentence. */
   error: string | null
@@ -78,8 +92,21 @@ export function useCompareColumn(
 
   const answer = messages.findLast((message) => message.role === 'assistant')
 
+  /**
+   * The model this column's answer came from, frozen at send.
+   *
+   * State rather than a ref because the label renders from it, and set inside
+   * `send` rather than derived from the props so that changing the picker
+   * afterwards moves the *next* run and not the attribution of the last one.
+   */
+  const [answeredWith, setAnsweredWith] = useState<{
+    provider: Provider
+    modelId: string
+  } | null>(null)
+
   return {
     answer: answer ? textOf(answer) : '',
+    answeredWith,
     isStreaming: status === 'submitted' || status === 'streaming',
     error: refusalMessage(error),
     send: (prompt: string) => {
@@ -88,6 +115,9 @@ export function useCompareColumn(
       // between pressing the button and the first token, where the last
       // assistant message would otherwise still be the old one.
       setMessages([])
+      // Captured here, which is the only moment it is certainly correct: this is
+      // the model the request about to go out will use.
+      setAnsweredWith({ provider, modelId })
       void sendMessage({ text: prompt }, { body: { prompt } })
     },
     stop: () => void stop(),
