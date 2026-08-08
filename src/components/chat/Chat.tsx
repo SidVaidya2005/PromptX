@@ -13,6 +13,7 @@ import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 import { Composer } from '@/components/chat/Composer'
 import { requestTitle } from '@/components/chat/request-title'
 import { Thread, type AttachmentsByMessage } from '@/components/chat/Thread'
+import { ThreadHeader } from '@/components/chat/ThreadHeader'
 import { useModelMutation } from '@/components/chat/use-model-mutation'
 import { useConversationMutation } from '@/components/sidebar/use-conversation-mutation'
 import { useOutlineTracking } from '@/components/chat/use-outline-tracking'
@@ -47,6 +48,15 @@ type ChatProps = {
    * every other entry to the page. (F27)
    */
   jumpToMessageId?: string | null
+  /**
+   * The conversation's name and share state, for the thread header. (F33)
+   *
+   * Absent on `/chat`, where there is no conversation yet — which is what
+   * decides whether the header renders at all. A header over an empty thread
+   * would carry a share control for something that does not exist.
+   */
+  title?: string
+  shareSlug?: string | null
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -80,6 +90,8 @@ export function Chat({
   sharedKeyAvailable,
   systemPrompt: initialSystemPrompt,
   jumpToMessageId = null,
+  title,
+  shareSlug = null,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
@@ -579,6 +591,17 @@ export function Chat({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Only for a conversation that exists. On `/chat` there is no row, no
+          title and nothing to share — and the header appearing the moment the
+          first answer finishes would be chrome arriving mid-stream. (F33) */}
+      {conversationId && title !== undefined && (
+        <ThreadHeader
+          conversationId={conversationId}
+          title={title}
+          initialShareSlug={shareSlug}
+        />
+      )}
+
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 && emptyState ? (
           emptyState

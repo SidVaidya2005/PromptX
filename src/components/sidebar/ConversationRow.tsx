@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 
-import { MoreHorizontalIcon, PinIcon } from 'lucide-react'
+import { MoreHorizontalIcon, PinIcon, Share2Icon } from 'lucide-react'
 
 import { MAX_TITLE_LENGTH } from '@/lib/constants'
 import { cn } from '@/lib/utils'
@@ -44,6 +44,11 @@ type ConversationRowProps = {
    * and the menu's wording, never whether to render at all. (F22)
    */
   archivedAt: string | null
+  /**
+   * Non-null means the conversation has a live public link. Only its nullness is
+   * read, the same way `pinnedAt` and `archivedAt` are. (F33)
+   */
+  shareSlug: string | null
 }
 
 /**
@@ -115,6 +120,7 @@ export function ConversationRow({
   relativeTime,
   pinnedAt,
   archivedAt,
+  shareSlug,
 }: ConversationRowProps) {
   const router = useRouter()
   const isActive = usePathname() === `/chat/${id}`
@@ -309,6 +315,21 @@ export function ConversationRow({
           // Nothing is announced here — the enclosing <ul aria-label="Pinned">
           // already tells a screen reader which group this row is in.
           <PinIcon aria-hidden className="ml-md size-3 shrink-0 text-mute" />
+        )}
+
+        {shareSlug && !renaming && (
+          // A glyph for the reason the pin above is one: DESIGN.md's status-chip
+          // is filled `canvas-soft`, which is also this row's hover and active
+          // fill, so a "Shared" chip would vanish exactly when the row is in use.
+          //
+          // Unlike the pin, this one carries its own name. The pin can stay
+          // silent because the enclosing <ul aria-label="Pinned"> already says
+          // which group the row is in; there is no "Shared" group, so without
+          // this a screen reader would never learn the conversation is public.
+          <span className={cn('flex shrink-0 items-center', !isPinned && 'ml-md')}>
+            <Share2Icon aria-hidden className="size-3 text-mute" />
+            <span className="sr-only">Shared publicly</span>
+          </span>
         )}
 
         {renaming ? (

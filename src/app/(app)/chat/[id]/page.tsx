@@ -75,6 +75,9 @@ export default async function ConversationPage({
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
       sharedKeyAvailable={sharedKeyAvailable}
       systemPrompt={conversation.system_prompt}
+      // The thread header's two facts, read from the row. (F33)
+      title={conversation.title}
+      shareSlug={conversation.share_slug}
       // Set only when a search result was clicked. `Chat` scrolls to it once on
       // mount and then strips the param, so a reload does not send the reader
       // back to a message they have already scrolled away from. (F27)
