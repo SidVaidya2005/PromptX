@@ -38,6 +38,74 @@ At that phase's checkpoint, the whole phase collapses to:
 
 -->
 
+## Phase 4 — Prompt library and search
+
+### 2026-08-08 — 24 Prompt library
+
+The `prompts` table has existed since F02 and nothing had ever written to it.
+This feature gave it CRUD, a page, and the sidebar link that makes the page
+reachable at all — plus F23's deferred "Save to library" shortcut.
+
+**Decisions taken before any code, agreed with the user:**
+
+- **No migration.** The table, its four owner policies, `prompts_user_id_idx` and `prompts_tags_idx` all shipped in F02. The one thing F02 did *not* give it is a trigger on `updated_at`, so the update statement writes it.
+- **`updated_at` is written on edit**, reversing what four conversation writes do. Same rule read correctly: order on activity, and editing a prompt is the only activity a prompt has. Held by a test that goes red when the column is dropped from the statement.
+- **Filtering is client-side over one server read.** No round trip per keystroke, no debounce; F25 wants the same array in client state anyway. F27's message search stays in the URL because it is a ranked query over thousands of rows — different scale, deliberately different mechanism.
+- **A sidebar nav block, not another account-menu item.** `project-overview.md` has said since Phase 0 that the sidebar holds Prompts, Search and Settings; the slot is built once and F27/F31 drop into it.
+- **`PATCH` takes one strict object, not a union of branches.** The union on `updateConversationSchema` exists because five separate intents converge on one row; a prompt has one intent and the dialog submits all three fields together.
+- **Chip tag input with suggestions**, because free text invites `deploy` and `deploys` as two tags that never match. A native `<datalist>` rather than a combobox primitive this codebase does not have — the F22 Dependencies gate.
+
+**The bug the browser found, and the unit suite structurally could not.**
+`PromptDialog` seeded its fields inside `handleOpenChange`, the arrangement F23
+settled for a dialog that owns its own trigger. It is wrong for a dialog a parent
+opens: **Radix calls `onOpenChange` only for changes it initiates** — a trigger,
+Escape, the overlay, the close button — and never when a parent flips the `open`
+prop. So the handler ran on every close and on no open at all. "New prompt"
+opened pre-filled with the last saved prompt, and saving wrote a byte-for-byte
+duplicate — same title, same body, same tags. Typecheck, lint and 320 tests were
+green throughout. The fix is structural rather than another handler: the library
+mounts the dialog only while it is open, so `useState` initialisers do the
+seeding and there is no event anyone can forget to fire. Confirmed both ways — a
+fresh "New prompt" now opens empty, and Edit opens on the row that was clicked.
+
+A second-order confirmation of the fix: `useId` now returns a different value per
+open (`_r_0_` → `_r_c_`), which broke a hardcoded selector mid-session. That is
+the remount, visible.
+
+**Two harness mistakes worth recording**, both mine rather than the product's.
+Suppressing `2>&1` on `playwright-cli fill` hid a `strict mode violation:
+getByLabel('Title') resolved to 2 elements`, so a fill silently did nothing and I
+read the resulting duplicate as a data bug for several minutes. And `>> nth=0`
+appended to a `getByRole(...)` string is not valid in this CLI — it fails with a
+CSS parse error. Drive with refs from the snapshot, and never hide stderr on a
+command whose success is the thing being tested.
+
+**Mutation runs** (each turned red exactly the test that claims it, then was
+restored):
+
+- Swapping `.overwrite()` and `.max(MAX_PROMPT_TAGS)` in `promptTagsSchema` → only "counts the cap against the deduplicated tags". `.overwrite()` is what makes this orderable at all: unlike `.transform()` it preserves the schema type, so `.max()` can still be chained after it. Read off the installed zod 4.4.3 `.d.cts`, not from memory.
+- Dropping `updated_at` from `updatePrompt()` → only "moves updated_at".
+- `return data !== null` → `return true` in `deletePrompt()` → both RLS no-op tests, which is the pair that stops the route answering 204 for someone else's prompt.
+
+**Verified:** 320 tests green (25 files), typecheck, lint, and a production build
+clean with `/prompts`, `/api/prompts` and `/api/prompts/[id]` registered. In the
+browser at 1440/800/360px: the grid is 3/2/1 columns, the sidebar nav is in the
+document twice at 360px with exactly one copy visible and **zero duplicate ids
+document-wide**, the delete confirmation is a real `alertdialog` with Cancel
+focused, search matches titles case-insensitively and does *not* match bodies,
+and the tag filter narrows and clears. Tags entered as `  Code  ` and `Writing`
+stored as `code` and `writing` — read back from the database, not the screen.
+F23's shortcut derived "Be a careful editor." from the first line, saved a real
+row, and mounted no second dialog. Card chips render transparent on a hairline
+over `canvas-soft`, avoiding the F15/F16 invisible-container trap. Three test
+rows were deleted from the live project afterwards.
+
+**Open after this feature:**
+
+- **The `<datalist>` dropdown is not themeable**, so the tag suggestions are the one surface in the app rendering in the browser's own chrome rather than `DESIGN.md`'s palette. A deliberate trade against ~200 lines of listbox; worth a look at F37.
+- **`prompts_tags_idx` is still unused**, and now on purpose rather than by omission: filtering happens in the browser, so nothing queries tags in SQL. It becomes correct to drop or to use depending on what F25 needs; not decided here.
+- **`use-conversation-mutation.ts` is still misfiled** under `components/sidebar/` — noted at F23 and untouched again, for the same reason.
+
 ## Phase 3 — Conversation craft *(compacted)*
 
 Six features, 2026-08-06 to 2026-08-07. The phase turned a thread you could read

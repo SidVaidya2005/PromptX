@@ -546,12 +546,25 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Filter by tag; search by title
 - Delete with confirmation
 - An empty state explaining what the library is for
+- **A nav block in the sidebar, under "New chat"**, because nothing in the application links to `/prompts` and a page reachable only by typing its URL is not done. Not in this list originally; see the decision below
 
 **Logic:**
 
 - `src/server/data/prompts.ts` with full CRUD
 - `/api/prompts/route.ts` and `/api/prompts/[id]/route.ts`
 - Tags normalised to lowercase and deduplicated on save
+- **F23's deferred "Save to prompt library" shortcut**, which that feature struck from its own list with the note that it belongs here
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **No migration.** `prompts`, its four owner RLS policies, `prompts_user_id_idx` and `prompts_tags_idx` all shipped in F02 and have never been used by anything. The one thing F02 did not give the table is a trigger on `updated_at`, so the update function writes it explicitly
+- **`updated_at` *is* written on edit**, reversing the rule four conversation writes follow — and for the same reason, read correctly. The sidebar orders conversations on *activity* and renaming one is not activity; the prompt grid orders on `updated_at` because for a prompt, editing it **is** the activity
+- **The sidebar gets a nav block, not another item in the account menu.** `project-overview.md` already says the sidebar holds the links to Prompts, Search and Settings, so the slot is built once here and F27's Search and F31's Compare drop into it. A client leaf for the `usePathname` active state only, so `Sidebar` stays a Server Component and F05's slotting arrangement is untouched
+- **Filtering happens in the browser over the loaded set.** The page reads every prompt once server-side and one client leaf narrows it in memory — no round trip, no debounce. F25 wants the same set "fetched once per session and held in client state", so this is that read arriving one feature early. The accepted cost is that filters are not linkable, unlike F27's `/search?q=`, which is a ranked query over thousands of message rows and belongs in the URL
+- **"Search by title" means the title, and one tag filters at a time.** Body search would overlap F26's `search_messages`, which is `tsvector`-ranked rather than substring; multi-tag filtering needs an AND/OR rule nobody has specified
+- **`PATCH /api/prompts/[id]` takes one strict object carrying all three fields**, not a union of partial branches. The dialog edits title, body and tags together, so partial branches would be machinery with no caller — `updateConversationSchema` is a union because five genuinely separate intents converge on one row, which is not the case here
+- **F23's shortcut is an inline reveal inside the system-prompt dialog, not a second dialog and not a toast.** Nesting a Radix `Dialog` inside one puts the new input inside an already-trapped `FocusScope`, which is what F21 spent three rounds on; `sonner` is approved but not installed, and F24 is not where a dependency arrives. Pressing "Save to library" swaps in a title field pre-filled from the prompt's first line, and confirmation is a line of text
+- **Tag chips on a card drop their `status-chip` fill.** `prompt-card` is `canvas-soft` and so is `status-chip` — the invisible-container trap F15 and F16 both hit. The chips keep the pill shape and caption type and take a hairline border instead
 
 ### 25 Insert a prompt into the composer
 
