@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-import { LibraryIcon, SearchIcon } from 'lucide-react'
+import { ColumnsIcon, LibraryIcon, SearchIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils'
 const LINKS = [
   { href: '/prompts', label: 'Prompts', icon: LibraryIcon },
   { href: '/search', label: 'Search', icon: SearchIcon },
+  { href: '/compare', label: 'Compare', icon: ColumnsIcon },
 ] as const
 
 export function SidebarNav() {
