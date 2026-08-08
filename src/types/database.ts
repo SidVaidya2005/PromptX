@@ -325,6 +325,16 @@ export type Database = {
         Returns: number
       }
       is_shared_key_available: { Args: never; Returns: boolean }
+      link_attachments_to_message: {
+        Args: { p_ids: string[]; p_message_id: string }
+        Returns: number
+      }
+      orphaned_attachment_objects: {
+        Args: { p_limit: number; p_older_than: string }
+        Returns: {
+          object_name: string
+        }[]
+      }
       reap_attachments_tick: { Args: never; Returns: undefined }
       reconcile_shared_key_usage: { Args: never; Returns: undefined }
       record_shared_budget: {
