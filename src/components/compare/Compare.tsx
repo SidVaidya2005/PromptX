@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { QuotaMeter } from '@/components/chat/QuotaMeter'
 import { CompareColumn } from '@/components/compare/CompareColumn'
 import { useCompareColumn } from '@/components/compare/use-compare-column'
+import { usePromoteComparison } from '@/components/compare/use-promote-comparison'
 import { Button } from '@/components/ui/button'
 
 import type { Provider } from '@/types/domain'
@@ -65,6 +66,18 @@ export function Compare({
   const left = useCompareColumn('left', leftModel.provider, leftModel.modelId)
   const right = useCompareColumn('right', rightModel.provider, rightModel.modelId)
 
+  const { promote, isPromoting, error: promoteError } = usePromoteComparison()
+
+  /**
+   * Which column's promotion failed, so the message lands under the button that
+   * was pressed. (F32)
+   *
+   * The hook holds one error because only one promotion can be in flight; what
+   * it cannot know is which side asked. Cleared on every attempt so a failure on
+   * the left does not leave a stale sentence under the right.
+   */
+  const [promotedSide, setPromotedSide] = useState<'left' | 'right' | null>(null)
+
   const isStreaming = left.isStreaming || right.isStreaming
 
   // Whether the allowance is in play at all is per column, because the model is.
@@ -86,6 +99,34 @@ export function Compare({
     // this component rather than inside the columns.
     left.send(text)
     right.send(text)
+  }
+
+  /**
+   * Keeps one column's answer as a real conversation. (F32)
+   *
+   * **The prompt sent is `asked`, never the draft in the textarea.** They are
+   * usually the same string and diverge exactly when someone edits the box
+   * after running — at which point promoting the draft would store a question
+   * that was never asked, above an answer to a different one, with nothing on
+   * screen to say so. `asked` is the whole reason that state exists separately.
+   */
+  function promoteSide(side: 'left' | 'right') {
+    const column = side === 'left' ? left : right
+    const model = side === 'left' ? leftModel : rightModel
+
+    // Both are guaranteed by the button only rendering on a settled column, and
+    // checked anyway: `code-standards.md` allows no `!` here, and a promotion
+    // with an empty answer would be refused by the schema after a round trip.
+    if (!asked || !column.answer) return
+
+    setPromotedSide(side)
+
+    void promote({
+      prompt: asked,
+      answer: column.answer,
+      provider: model.provider,
+      modelId: model.modelId,
+    })
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -192,7 +233,10 @@ export function Compare({
           configuredProviders={configuredProviders}
           column={left}
           hasRun={asked !== null}
+          isPromoting={isPromoting}
+          promoteError={promotedSide === 'left' ? promoteError : null}
           onSelectModel={(provider, modelId) => setLeftModel({ provider, modelId })}
+          onPromote={() => promoteSide('left')}
         />
 
         <CompareColumn
@@ -202,7 +246,10 @@ export function Compare({
           configuredProviders={configuredProviders}
           column={right}
           hasRun={asked !== null}
+          isPromoting={isPromoting}
+          promoteError={promotedSide === 'right' ? promoteError : null}
           onSelectModel={(provider, modelId) => setRightModel({ provider, modelId })}
+          onPromote={() => promoteSide('right')}
         />
       </div>
     </div>

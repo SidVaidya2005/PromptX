@@ -23,7 +23,13 @@ type CompareColumnProps = {
   hasRun: boolean
   /** The hairline between the columns hangs off the first one. */
   isFirst: boolean
+  /** True while either column is being promoted, so neither offers a second click. */
+  isPromoting: boolean
+  /** Only ever set on the column whose promotion failed. */
+  promoteError: string | null
   onSelectModel: (provider: Provider, modelId: string) => void
+  /** Keeps this answer, as a conversation. Absent while there is nothing to keep. */
+  onPromote: () => void
 }
 
 /**
@@ -47,7 +53,10 @@ export function CompareColumn({
   column,
   hasRun,
   isFirst,
+  isPromoting,
+  promoteError,
   onSelectModel,
+  onPromote,
 }: CompareColumnProps) {
   // Which key answers is a property of the selected model, not of the user, so
   // it is read per column: someone with an OpenRouter key comparing it against
@@ -143,6 +152,41 @@ export function CompareColumn({
                 {/* The raw markdown, not the rendered text — pasting an answer
                     into an editor should give back its fences. */}
                 <CopyButton value={column.answer} label="Copy this answer" />
+              </div>
+            )}
+
+            {/**
+             * The only way out of a view that saves nothing. (F32)
+             *
+             * Persistently visible rather than hover-revealed, unlike the copy
+             * button above it: `DESIGN.md` forbids reaching a function by hover
+             * alone, and this is the function of the whole page. A comparison
+             * that cannot be kept was only ever a demonstration.
+             *
+             * Offered only on a settled column — `column.answer` is non-empty and
+             * `isStreaming` is false — so there is always something to keep, and
+             * an answer still arriving is never frozen halfway by a click.
+             * Disabled while EITHER column is promoting, because the first click
+             * is already navigating and a second would create a second
+             * conversation nobody asked for.
+             */}
+            {!column.isStreaming && (
+              <div className="flex flex-col items-start gap-xs pt-sm">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isPromoting}
+                  onClick={onPromote}
+                >
+                  Continue with this one
+                </Button>
+
+                {promoteError && (
+                  <p role="alert" className="text-body-sm text-danger">
+                    {promoteError}
+                  </p>
+                )}
               </div>
             )}
           </div>
