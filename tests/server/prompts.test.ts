@@ -289,3 +289,42 @@ describe('deletePrompt', () => {
     expect(await data.deletePrompt(crypto.randomUUID())).toBe(false)
   })
 })
+
+/**
+ * The read F25 added, exercised through the same JWT the route uses. (F25)
+ *
+ * `listPrompts()` already has coverage above; what is new here is that a *route*
+ * now returns these rows to a browser, so the claim worth pinning is the one the
+ * endpoint rests on entirely — that the cookie-bound client cannot see another
+ * user's prompts. There is no `.eq('user_id')` anywhere in the path, by design:
+ * the owner-read policy is the filter, and this is what says so out loud.
+ */
+describe('the library as GET /api/prompts serves it', () => {
+  it("never includes another user's prompt, with no user id passed anywhere", async () => {
+    const mine = await seedPrompt(owner.id, { title: 'Mine to read' })
+    const theirs = await seedPrompt(stranger.id, { title: 'Not mine to read' })
+
+    const data = await load(owner)
+    const ids = (await data.listPrompts()).map((prompt) => prompt.id)
+
+    expect(ids).toContain(mine)
+    expect(ids).not.toContain(theirs)
+  })
+
+  it('returns bodies, because insertion is what the picker does with them', async () => {
+    // A lighter index would mean a second round trip at the moment of the click,
+    // which is the one moment latency is visible. Pinned so a later payload
+    // optimisation has to notice it is breaking the picker.
+    const data = await load(owner)
+    await data.createPrompt(owner.id, {
+      title: 'Has a body',
+      body: 'The body the composer inserts.',
+      tags: [],
+    })
+
+    const prompts = await data.listPrompts()
+    const saved = prompts.find((prompt) => prompt.title === 'Has a body')
+
+    expect(saved?.body).toBe('The body the composer inserts.')
+  })
+})
