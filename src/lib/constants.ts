@@ -182,6 +182,34 @@ export const ALLOWED_ATTACHMENT_MIME_TYPES = [
 ] as const
 
 /**
+ * The two derivative sizes, both produced in the browser before upload. (F28)
+ *
+ * The thumb is 80px because F29's composer chip is 40 and a 2× display is the
+ * common case; the inline edge is 1440 because the thread measure is 720px, and
+ * the same doubling applies. Neither is a quality decision — the original is
+ * always kept and the lightbox shows it.
+ *
+ * webp for both, and it is on ALLOWED_ATTACHMENT_MIME_TYPES above twice over:
+ * as a format someone may upload, and as what every derivative is encoded as.
+ * The bucket's allowed_mime_types has to accept it or a PNG's derivatives are
+ * refused at the moment of upload while the original goes through.
+ */
+export const ATTACHMENT_THUMB_PX = 80
+export const ATTACHMENT_INLINE_MAX_PX = 1440
+export const ATTACHMENT_DERIVATIVE_MIME = 'image/webp'
+
+/**
+ * How long a signed read URL lives.
+ *
+ * Short on purpose. The bucket is private and these URLs are the only way to
+ * read an object without the owner's JWT, so each one is a bearer token for a
+ * file — long enough to render a thread and open a lightbox, short enough that a
+ * URL pasted somewhere by accident stops working. They are generated per render,
+ * server-side, and never stored.
+ */
+export const ATTACHMENT_READ_URL_TTL_SECONDS = 5 * 60
+
+/**
  * Hard ceiling on a single provider call, enforced with an AbortSignal.
  * Render allows a 100-minute request, so the platform will not rescue us from
  * a hung upstream — this is the only thing that ends a stalled stream.

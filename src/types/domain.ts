@@ -60,6 +60,43 @@ export type SearchOutcome =
 export type Prompt = Tables<'prompts'>
 
 /**
+ * One uploaded file. (F28)
+ *
+ * `status` is `text` in the database rather than an enum — F02 chose a check
+ * constraint — so the generated row types it as `string`. `AttachmentStatus`
+ * below is the one place this project spells the three values out, and it is not
+ * the forbidden duplication of a Postgres enum for exactly that reason: there is
+ * no enum to duplicate.
+ *
+ * An image is three objects and a PDF is one. `thumb_path` and `inline_path`
+ * are null for a PDF and for any image a browser could not derive from, and a
+ * null means "use `storage_path`" rather than "this attachment is broken".
+ */
+export type Attachment = Tables<'attachments'>
+
+export type AttachmentStatus = 'pending' | 'ready' | 'failed'
+
+/**
+ * One object the client has to upload, with the credentials to do it.
+ *
+ * `token` and `path` are what `uploadToSignedUrl(path, token, file)` takes;
+ * `signedUrl` is returned because the same call is reachable with a plain PUT,
+ * which is how the tests upload without a browser.
+ */
+export type AttachmentUploadTarget = {
+  kind: 'original' | 'thumb' | 'inline'
+  path: string
+  token: string
+  signedUrl: string
+}
+
+/** What POST /api/attachments answers with: the row's id and where to put bytes. */
+export type AttachmentDraft = {
+  id: string
+  uploads: AttachmentUploadTarget[]
+}
+
+/**
  * The columns the sidebar actually renders.
  *
  * Deliberately narrower than the row. No CDN sits in front of the origin, so
