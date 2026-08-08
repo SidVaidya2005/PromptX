@@ -165,6 +165,10 @@ PromptX/
 │   │   │   ├── callback/route.ts   → OAuth code exchange
 │   │   │   └── signout/route.ts
 │   │   └── api/
+│   │       ├── attachments/
+│   │       │   ├── route.ts        → issue signed upload URLs against a pending row
+│   │       │   └── [id]/confirm/route.ts
+│   │       │                       → measure what landed, then mark the row ready
 │   │       ├── chat/route.ts       → streaming chat completion
 │   │       ├── compare/route.ts    → two-model streaming comparison
 │   │       ├── title/route.ts      → background conversation titling
@@ -195,6 +199,8 @@ PromptX/
 │   │       └── attachments.ts
 │   ├── lib/                        → isomorphic. Safe to import from anywhere.
 │   │   ├── supabase-browser.ts     → createBrowserClient
+│   │   ├── attachments.ts          → browser-side derivatives and the upload
+│   │                                 pipeline. Never runs on the server.
 │   │   ├── models.ts               → the model catalog and capability flags
 │   │   ├── constants.ts            → shared limits and thresholds, plus the PUBLIC
 │   │                                 Supabase URL / publishable key / site URL
@@ -531,7 +537,9 @@ stable and cannot collide.
 **Lifecycle rules:**
 
 - At most `MAX_ATTACHMENTS_PER_MESSAGE` (4) attachments may be linked to one message. The limit is enforced server-side when the message is sent, not only in the composer.
-- A row is created with `status = 'pending'` and a null `message_id` when the signed upload URL is issued. It flips to `'ready'` once the client confirms the upload completed.
+- A row is created with `status = 'pending'` and a null `message_id` **before** any signed upload URL is issued — that order is what stops an object existing with nothing in the database naming it, which only the reaper's object sweep could ever find again.
+- **`'ready'` is a measured fact, not a client's claim.** `POST /api/attachments/[id]/confirm` reads each object's metadata back out of Storage, refuses when one is absent, and overwrites `size_bytes` and `mime_type` with what actually landed. Everything the draft was created with was an assertion about bytes that had not been sent, and the application is never in the byte path — so asking Storage is the only way to know. Without it a client can confirm an upload it never made, spend a quota slot, and fail at the provider on a file that is not there. (F28)
+- **`position` is assigned when the attachment is linked, from the order of `attachmentIds`** — never carried on the draft, which the composer can still reorder. `link_attachments_to_message` is one statement that repeats the ready-and-unlinked conditions inside its own `where`, so the check and the write cannot be raced apart; it returns a count, and a caller that sent more ids than that treats the shortfall as a failure. (F28)
 - **An image attachment is three storage objects, not one:** the original, a `_thumb` (80px square, for the 40px composer chip at 2×), and an `_inline` (1440px longest edge, for the message column). Both derivatives are produced **in the browser before upload** and sent through their own signed URLs, so no image is ever transformed on the request path. PDFs have no derivatives and leave both columns null.
 - **Every path that deletes an attachment deletes all three objects.** The reaper, the failed-upload cleanup, and the message-delete sweep each remove `storage_path`, `thumb_path`, and `inline_path`. A cleanup that only knows about the original strands two objects per image — manufacturing the exact leak the reaper exists to prevent, at twice the rate.
 - Derived objects are validated server-side on the same terms as the original: each signed upload URL is issued against the mime allowlist and `MAX_ATTACHMENT_BYTES`. The client produces the derivatives; it is not trusted to have produced them honestly.
@@ -1461,7 +1469,7 @@ infer that a pointer is fine.
 
 - Every table holding user data has RLS enabled with a policy scoped to `auth.uid()`. Enabling RLS is part of the same migration that creates the table, never a later one.
 - Application code is never the only thing enforcing ownership. A query that returns another user's row must be impossible at the database level even if the application forgets its `where` clause.
-- `createServiceRoleClient()` may be called only from `src/server/quota.ts`. Any other call site is a bug.
+- `createServiceRoleClient()` may be called only from `src/server/quota.ts`. Any other call site is a bug. The `reap-attachments` Edge Function is not an exception to this: it is a separate Deno process on Supabase's infrastructure with its own platform-injected credentials, and it never imports from `src/`. Nothing in the Next application may reach a service-role key through it either — it is invoked by `pg_cron`, and it refuses any caller that cannot prove it holds a service-role key. (F28)
 - `supabase.auth.getUser()` is the only accepted basis for an authorisation decision. `getSession()` must never gate access to data.
 - `/share/[slug]` reads through the `anon` RLS policies. It must never use a service-role client to work around them.
 
