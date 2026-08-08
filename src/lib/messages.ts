@@ -6,7 +6,7 @@
  * purpose — a row becomes exactly one text part, and never more.
  */
 
-import type { UIMessage } from 'ai'
+import type { FileUIPart, UIMessage } from 'ai'
 
 import type { Message, MessageStatus } from '@/types/domain'
 
@@ -56,4 +56,32 @@ export function toUIMessages(messages: readonly Message[]): ChatMessage[] {
     },
     parts: [{ type: 'text' as const, text: message.content }],
   }))
+}
+
+/**
+ * Adds a message's files ahead of its text, for the model's benefit only. (F29)
+ *
+ * Kept apart from `toUIMessages()` deliberately, so that function stays exactly
+ * what its own comment claims — one row, one text part — for the client path
+ * that seeds the browser. Attachments reach the *screen* through a map keyed by
+ * message id, not through parts, because a message that has just been sent
+ * exists only in `useChat` state where no server render can reach it.
+ *
+ * This is therefore server-only in practice: it runs in the chat route, on
+ * parts whose bytes were read out of Storage there.
+ *
+ * Files come before the text because that is the order the sentence assumes —
+ * "here is the image, now my question about it" — and a model reading the
+ * question first has to hold it until the attachment arrives.
+ */
+export function withFileParts<T extends UIMessage>(
+  messages: readonly T[],
+  partsByMessageId: ReadonlyMap<string, FileUIPart[]>,
+): T[] {
+  return messages.map((message) => {
+    const files = partsByMessageId.get(message.id)
+    if (!files || files.length === 0) return message
+
+    return { ...message, parts: [...files, ...message.parts] }
+  })
 }

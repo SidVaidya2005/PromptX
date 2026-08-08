@@ -11,9 +11,10 @@ import {
 
 import { STREAM_TIMEOUT_MS } from '@/lib/constants'
 import { chatRequestSchema } from '@/lib/schemas'
-import { toUIMessages } from '@/lib/messages'
+import { toUIMessages, withFileParts } from '@/lib/messages'
 import { textOf } from '@/lib/utils'
 
+import { buildFileParts } from '@/server/attachments'
 import { getUser } from '@/server/auth'
 import {
   linkAttachmentsToMessage,
@@ -41,6 +42,8 @@ import {
   recordSharedKeyTokens,
   releaseSharedSlot,
 } from '@/server/quota'
+
+import type { Attachment, Message } from '@/types/domain'
 
 /**
  * Documents intent. On Render every route is Node already, so nothing can
@@ -244,6 +247,13 @@ export async function POST(request: Request) {
    */
   const attachmentIds = 'regenerate' in body ? [] : (body.attachmentIds ?? [])
 
+  /**
+   * The rows behind those ids, held for two later uses: linking them below the
+   * line, and building the file parts the model reads. Read once here rather
+   * than twice, so the thing checked and the thing sent cannot diverge.
+   */
+  let linkedAttachments: Attachment[] = []
+
   if (attachmentIds.length > 0) {
     // Duplicates would reach link_attachments_to_message as one row matching two
     // ordinalities, which updates it once and leaves the count short — a 500 for
@@ -285,6 +295,13 @@ export async function POST(request: Request) {
         { status: 409 },
       )
     }
+
+    // In the order the client asked for, which is the order they will be linked
+    // in and the order the model should read them in. `.in()` returns whatever
+    // order the database liked.
+    linkedAttachments = attachmentIds
+      .map((id) => rows.find((row) => row.id === id))
+      .filter((row): row is Attachment => row !== undefined)
   }
 
   let model
@@ -350,6 +367,8 @@ export async function POST(request: Request) {
   let targetId: string
   let assistantMessageId: string
   let history: UIMessage[]
+  /** The rows `history` was built from, so the file parts can be read off them. */
+  let historyRows: readonly Message[] = []
 
   try {
     if (conversationId) {
@@ -397,7 +416,8 @@ export async function POST(request: Request) {
       //
       // No user message is appended here. The prompt is already a row — that is
       // the whole difference between regenerating and sending.
-      history = toUIMessages(priorMessages.slice(0, -1))
+      historyRows = priorMessages.slice(0, -1)
+      history = toUIMessages(historyRows)
     } else if (body.editMessageId) {
       // Destructive for the same reason, and more so: this one deletes every
       // message after the one it rewrites. One round trip, because PostgREST
@@ -420,7 +440,8 @@ export async function POST(request: Request) {
       // rule about what "after" means, and reconstructing the result here would
       // make this a third — free to disagree with both, and the disagreement
       // would show up as the model answering a question it was not asked.
-      history = toUIMessages(await listByConversation(targetId))
+      historyRows = await listByConversation(targetId)
+      history = toUIMessages(historyRows)
     } else {
       // The id is kept, not discarded. The client minted its own for the copy
       // it is rendering, and that one names no row — so it is told which row
@@ -454,7 +475,8 @@ export async function POST(request: Request) {
       // passing it unchanged would send everything EXCEPT the message being
       // answered — the mistake architecture.md's example makes. `priorMessages`
       // was read above the line, before this insert, so it does not contain it.
-      history = [...toUIMessages(priorMessages), body.message as UIMessage]
+      historyRows = priorMessages
+      history = [...toUIMessages(historyRows), body.message as UIMessage]
     }
 
     assistantMessageId = await appendMessage({
@@ -469,6 +491,27 @@ export async function POST(request: Request) {
     })
 
     await touchConversation(targetId)
+
+    /**
+     * The files the model reads, built from rows rather than from anything the
+     * client sent. (F29)
+     *
+     * Inside the try, so a storage failure lands in the catch that refunds the
+     * shared slot — the same treatment every other write on this path gets.
+     *
+     * `body.message.id` is the client-minted id, and that is deliberately the
+     * key: the history array carries the message under that id, because the row
+     * it became was written a few lines ago and nothing has re-keyed it yet.
+     */
+    const fileParts = await buildFileParts({
+      history: historyRows,
+      newest:
+        linkedAttachments.length > 0 && !('regenerate' in body)
+          ? { messageId: body.message.id, attachments: linkedAttachments }
+          : undefined,
+    })
+
+    if (fileParts.size > 0) history = withFileParts(history, fileParts)
   } catch (error) {
     console.error('[api/chat] could not start the exchange', error)
 

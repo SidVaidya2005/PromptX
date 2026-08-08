@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { toUIMessages } from '@/lib/messages'
+import { toUIMessages, withFileParts } from '@/lib/messages'
 
 import type { Message } from '@/types/domain'
 
@@ -94,5 +94,59 @@ describe('toUIMessages', () => {
         (m) => m.id,
       ),
     ).toEqual(['a', 'b', 'c'])
+  })
+})
+
+/**
+ * What a model is actually shown. (F29)
+ *
+ * The order is the assertion that matters: files before text, because that is
+ * the order the sentence assumes — "here is the image, now my question about
+ * it". A model given the question first has to hold it until the attachment
+ * arrives, and on a long thread that is several turns later.
+ */
+describe('withFileParts', () => {
+  const file = {
+    type: 'file' as const,
+    mediaType: 'image/webp',
+    url: 'data:image/webp;base64,AAAA',
+  }
+
+  it('puts a message’s files ahead of its text', () => {
+    const [message] = withFileParts(toUIMessages([row({ id: 'm1', content: 'what is this?' })]), new Map([['m1', [file]]]))
+
+    expect(message?.parts.map((part) => part.type)).toEqual(['file', 'text'])
+  })
+
+  it('leaves a message with no files exactly as it was', () => {
+    const messages = toUIMessages([row({ id: 'm1' }), row({ id: 'm2' })])
+    const result = withFileParts(messages, new Map([['m1', [file]]]))
+
+    // Identity, not equality: an untouched message must not be rebuilt, or every
+    // render downstream sees a new object for a message that did not change.
+    expect(result[1]).toBe(messages[1])
+    expect(result[0]).not.toBe(messages[0])
+  })
+
+  it('carries every file for one message, in the order given', () => {
+    const second = { ...file, url: 'data:image/webp;base64,BBBB' }
+    const [message] = withFileParts(
+      toUIMessages([row({ id: 'm1' })]),
+      new Map([['m1', [file, second]]]),
+    )
+
+    // The order the composer's chips were in, which is also `position` on the
+    // rows and the order the answer refers to them by.
+    expect(message?.parts.map((part) => (part.type === 'file' ? part.url : 'text'))).toEqual([
+      file.url,
+      second.url,
+      'text',
+    ])
+  })
+
+  it('is a no-op for an empty map', () => {
+    const messages = toUIMessages([row({ id: 'm1' })])
+
+    expect(withFileParts(messages, new Map())[0]).toBe(messages[0])
   })
 })
