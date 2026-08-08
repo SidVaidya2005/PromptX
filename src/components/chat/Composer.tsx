@@ -7,9 +7,11 @@ import { ArrowUpIcon, SquareIcon } from 'lucide-react'
 
 import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 import { willUseSharedKey } from '@/lib/models'
+import { insertPromptAt } from '@/lib/prompts'
 import { cn } from '@/lib/utils'
 
 import { ModelPicker } from '@/components/chat/ModelPicker'
+import { PromptPicker } from '@/components/chat/PromptPicker'
 import { QuotaMeter } from '@/components/chat/QuotaMeter'
 import { SystemPromptControl } from '@/components/chat/SystemPromptControl'
 import { Button } from '@/components/ui/button'
@@ -90,12 +92,47 @@ export function Composer({
 
   function handleChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     setText(event.target.value)
+    resize(event.target)
+  }
 
-    // Collapse before measuring, or scrollHeight only ever reports the tallest
-    // the box has been and the textarea can grow but never shrink.
-    const textarea = event.target
-    textarea.style.height = 'auto'
-    textarea.style.height = `${textarea.scrollHeight}px`
+  /**
+   * Inserts a saved prompt's body at the caret. (F25)
+   *
+   * The DOM is read for the selection rather than React state tracking it: the
+   * textarea is the only thing that knows where the caret is, and mirroring that
+   * into state would mean an update per keystroke and per click for a value read
+   * once per insertion.
+   *
+   * Everything after the write is deferred to the next frame because React has
+   * not re-rendered yet — setting `selectionStart` against the old value would
+   * clamp to the old length, and `scrollHeight` would measure the old text. The
+   * resize in particular is why this feature needed `resize()` extracted at all:
+   * `handleChange` does not run for a programmatic write, so without this a
+   * twelve-line prompt lands in a one-row box.
+   */
+  function insertPrompt(body: string) {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    const { text: next, caret } = insertPromptAt(
+      text,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      body,
+    )
+
+    setText(next)
+
+    requestAnimationFrame(() => {
+      const current = textareaRef.current
+      if (!current) return
+
+      // Focus first: the caret is only meaningful in a focused field, and focus
+      // is on the picker's search input at this point.
+      current.focus()
+      current.setSelectionRange(caret, caret)
+      resize(current)
+    })
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -209,6 +246,13 @@ export function Composer({
               error={systemPromptError}
             />
 
+            {/* Disabled mid-stream on the same terms as the two controls above,
+                and for a slightly different reason: inserting text into the
+                draft would work fine, but the draft cannot be sent until the
+                stream ends, so offering it invites typing into a box that will
+                not accept Enter. */}
+            <PromptPicker disabled={isStreaming || blocked} onInsert={insertPrompt} />
+
             {/* Only while the shared key would answer. A user on their own key
                 is not spending this allowance, so a count of it is noise — and
                 so is a count of messages nobody can send, which is why the
@@ -242,4 +286,20 @@ export function Composer({
       </form>
     </div>
   )
+}
+
+/**
+ * Grows the textarea to fit its content, capped by the CSS max-height.
+ *
+ * Extracted at F25 because it now has two callers. It used to be three lines
+ * inside `handleChange`, which is the one path a programmatic write does not
+ * take — so inserting a saved prompt grew the value and not the box.
+ *
+ * Collapsing before measuring is the load-bearing half: `scrollHeight` only ever
+ * reports the tallest the element has been, so without the reset the textarea
+ * can grow and never shrink.
+ */
+function resize(textarea: HTMLTextAreaElement): void {
+  textarea.style.height = 'auto'
+  textarea.style.height = `${textarea.scrollHeight}px`
 }
