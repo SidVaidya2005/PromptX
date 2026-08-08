@@ -33,6 +33,11 @@ type ChatProps = {
   sharedKeyAvailable: boolean
   /** The conversation's standing instruction. Null on /chat and when unset. */
   systemPrompt: string | null
+  /**
+   * A message to scroll to on arrival, from a search result's `?m=`. Null on
+   * every other entry to the page. (F27)
+   */
+  jumpToMessageId?: string | null
   /** Shown above the composer when there is nothing to read yet. */
   emptyState?: React.ReactNode
 }
@@ -64,6 +69,7 @@ export function Chat({
   remaining,
   sharedKeyAvailable,
   systemPrompt: initialSystemPrompt,
+  jumpToMessageId = null,
   emptyState,
 }: ChatProps) {
   const router = useRouter()
@@ -449,6 +455,34 @@ export function Chat({
     },
     [],
   )
+
+  /**
+   * Scrolls to the message a search result named, once. (F27)
+   *
+   * An effect rather than a render-time adjustment, because it reaches into the
+   * DOM: the anchor has to exist before `jumpTo` can find it, which means after
+   * the thread has painted. It runs on mount for the ordinary case — arriving
+   * from `/search` remounts this component, since the conversation id changes —
+   * and is keyed on the id so following a second result into the *same*
+   * conversation still moves.
+   *
+   * The param is then stripped with `router.replace`. Two reasons: reloading
+   * the page should not drag the reader back to a message they have scrolled
+   * away from, and the URL in the address bar should describe where they are
+   * rather than how they arrived. `replace` rather than `push` so Back returns
+   * to the search results instead of to this same page without its parameter.
+   */
+  useEffect(() => {
+    if (!jumpToMessageId) return
+
+    // A frame, so the jump measures a thread that has actually painted.
+    const frame = requestAnimationFrame(() => {
+      jumpTo(jumpToMessageId)
+      router.replace(`/chat/${conversationId}`, { scroll: false })
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [jumpToMessageId, conversationId, jumpTo, router])
 
   const publisher = useOutlinePublisher()
 

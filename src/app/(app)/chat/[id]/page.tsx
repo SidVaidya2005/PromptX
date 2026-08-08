@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 
-import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
+import { JUMP_TO_MESSAGE_PARAM, SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 import { toUIMessages } from '@/lib/messages'
 
 import { getConversation } from '@/server/data/conversations'
@@ -13,6 +13,11 @@ import { Chat } from '@/components/chat/Chat'
 
 type ConversationPageProps = {
   params: Promise<{ id: string }>
+  /**
+   * Carries `?m=<messageId>` when the visitor arrived from a search result.
+   * Both of these are Promises in Next 16.
+   */
+  searchParams: Promise<{ [JUMP_TO_MESSAGE_PARAM]?: string }>
 }
 
 /**
@@ -27,8 +32,11 @@ type ConversationPageProps = {
  * it. Both cases are a 404, which is the correct answer to each: confirming
  * that an id exists but is not yours is itself a disclosure.
  */
-export default async function ConversationPage({ params }: ConversationPageProps) {
-  const { id } = await params
+export default async function ConversationPage({
+  params,
+  searchParams,
+}: ConversationPageProps) {
+  const [{ id }, jumpParams] = await Promise.all([params, searchParams])
 
   const conversation = await getConversation(id)
   if (!conversation) notFound()
@@ -61,6 +69,10 @@ export default async function ConversationPage({ params }: ConversationPageProps
       remaining={Math.max(SHARED_KEY_DAILY_MESSAGE_LIMIT - used, 0)}
       sharedKeyAvailable={sharedKeyAvailable}
       systemPrompt={conversation.system_prompt}
+      // Set only when a search result was clicked. `Chat` scrolls to it once on
+      // mount and then strips the param, so a reload does not send the reader
+      // back to a message they have already scrolled away from. (F27)
+      jumpToMessageId={jumpParams[JUMP_TO_MESSAGE_PARAM] ?? null}
     />
   )
 }
