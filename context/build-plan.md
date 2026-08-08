@@ -857,6 +857,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Provider responses intercepted with `page.route()`
 - `pnpm test:e2e` green from a clean checkout
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **"Provider responses intercepted with `page.route()`" cannot be literally true, and the line is corrected rather than worked around.** `page.route()` intercepts *browser* requests, and this application never contacts a provider from the browser — `streamText` runs inside `/api/chat` and `probeKey` inside `/api/keys`, both server-side. The specs therefore intercept the app's **own** routes and answer with canned responses. The consequence is stated rather than glossed: the stream spec proves the *client* renders an incremental stream, not that the server pipeline works — which is what the 619 unit tests already cover. Same correction shape as F34's "streamed as a download"
+- **Sessions are minted by `@supabase/ssr` itself and never hand-encoded.** Cookies are chunked at 3180 bytes under `sb-<ref>-auth-token` with a versioned value encoding; hand-rolling that would couple the suite to a pre-1.0 library whose cookie API `architecture.md` already records as having broken across minors. A fixture instead runs `createServerClient` in Node against an in-memory cookie jar, calls `signInWithPassword`, and hands whatever the library wrote to Playwright's `storageState`
+- **The stream spec starts on a seeded conversation at `/chat/[id]`**, not at `/chat`. Starting on the new-conversation page would make the canned stream responsible for the `data-conversation` transient part that drives the redirect, coupling the fixture to a second internal protocol detail for no gain — the user-visible behaviour under test is identical
+- **The sign-in spec asserts what the application owns**, since `library-docs.md` rules out a real consent screen: `/chat` unauthenticated redirects to `/`, the landing page offers "Continue with Google", and a session-bearing browser on `/` is sent to `/chat`
+- **One fresh user per spec file**, per F03. Not tidiness: the quota spec seeds `message_count = 20`, which would wall the chat spec, and the key spec's stored key would change which model `resolveModel()` picks
+- **`pnpm test:e2e` fails with a named reason on a bare checkout rather than skipping.** F35 made `pnpm test` skip loudly because it has a genuinely useful offline subset; every spec here is hosted, so a skipping suite would run nothing and still report success
+- **An interception that never fires is a spec quietly hitting the real thing**, so each route handler counts its calls and the spec asserts the count
+
 ### 37 Accessibility and responsive pass
 
 **UI:**

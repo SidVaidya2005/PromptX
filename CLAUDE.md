@@ -72,12 +72,12 @@ Working today (feature 01 shipped the scaffold that provides them):
 - `pnpm start` — serve the production build (this is what Render runs; `next start` binds `PORT`)
 - `pnpm lint` — ESLint CLI with flat config (`next lint` was removed in v16)
 - `pnpm typecheck` — `tsc --noEmit`
-- `pnpm test` — Vitest unit tests
+- `pnpm test` — Vitest unit tests. Skips the hosted suites with a banner when `.env.local` is absent; **refuses to run** when it is present but incomplete
+- `pnpm test:coverage` — the same suite with a v8 coverage report over `src/server/`. No threshold: it is a discovery instrument, not a gate
+- `pnpm test:e2e` — Playwright end-to-end tests (feature 36). Runs against a **production build**, so a cold run pays one `next build`. Needs `.env.local` and `pnpm exec playwright install chromium`, and **fails with a message naming what is missing** rather than skipping — every spec is hosted, so a skipping run would prove nothing
 
-Not yet — the feature that creates each is named, so do not run them expecting
-them to work:
+Not available in this project:
 
-- `pnpm test:e2e` — Playwright end-to-end tests. Arrives at **feature 36**; there is no `test:e2e` script and no browser binaries before then
 - `supabase start` — start the local Supabase stack
 - `supabase db reset` — reapply every migration and reseed
 - `supabase gen types typescript --local > src/types/database.ts` — regenerate database types after a migration

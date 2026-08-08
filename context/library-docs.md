@@ -973,10 +973,16 @@ it('issues no more than the daily allowance under concurrent load', async () => 
 
 **For interactive debugging, use the `playwright-cli` skill.** The Playwright MCP
 server this section used to point at has been removed and replaced by it. The
-distinction that matters: the CLI drives a browser *now*, at any feature, to
-confirm something renders; `@playwright/test` and the `e2e/` suite below are a
-project dependency that still arrives at **feature 36**. Using the CLI must not
-add the package, a `playwright.config.ts`, or an `e2e/` folder ahead of that.
+distinction that matters: the CLI drives a browser *now* to confirm something
+renders; `@playwright/test` and the `e2e/` suite below are the committed suite,
+which arrived at **feature 36**.
+
+`pnpm test:e2e` runs against a **production build** — `pnpm build && pnpm start`,
+the same command Render runs — because `NEXT_PUBLIC_*` are inlined at build time
+and the dev server has already disagreed with production about response headers
+once. It **fails rather than skips** on a checkout with no credentials or no
+browser binary, unlike `pnpm test`: every spec here is hosted, so a skipping run
+would execute nothing and still report success.
 
 Because sign-in is Google OAuth only, an unauthenticated browser is redirected
 to `/` before it ever reaches the app. Open with `--persistent --profile`
@@ -988,7 +994,10 @@ earlier — the same problem the `storageState` rule below solves for the specs.
 - Four specs only, matching `code-standards.md` → Testing. Do not grow the E2E suite to cover what a unit test can prove.
 - Tests run against the hosted Supabase development project, never against production or a live provider API. There is no local instance; specs create and tear down their own fixtures, reusing the pattern in `tests/rls/isolation.test.ts`.
 - Google OAuth is not driven through a real consent screen. Seed a test user and inject the session cookie via `storageState`.
-- Provider calls are intercepted with `page.route()` and answered with a canned stream. No test spends real money.
+- **Provider calls cannot be intercepted with `page.route()`, and this line used to say they were.** `page.route()` sees *browser* requests, and the browser never contacts a provider here — `streamText` runs inside `/api/chat` and `probeKey` inside `/api/keys`, both server-side. What the specs intercept is the application's **own** routes, answered with canned responses. No test spends real money, which was always the real requirement. (F36)
+- **A canned stream needs a real server, not `route.fulfill()`.** Fulfil sends the whole body at once, so the client receives a single chunk and no assertion can tell an incremental render from a blob — a streaming test that would pass identically without streaming. `e2e/support/mock-chat.ts` runs a tiny SSE server on an ephemeral port and the route is redirected to it with `route.continue({ url })`; the frame shape (`text-start` / `text-delta` / `text-end`, then `data: [DONE]`, with `x-vercel-ai-ui-message-stream: v1`) is read off the installed `ai` package. (F36)
+- **Every interception asserts it actually fired.** A route that never matches is a spec quietly reaching the real endpoint — which on the chat path spends a shared-key slot and real money, while still going green. (F36)
+- **An intercepted mutation must also perform the write it is pretending to do.** A successful mutation calls `router.refresh()`, which re-renders the Server Component from the database, so a handler that returns `201` and stores nothing produces a page correctly reporting that nothing was stored. (F36)
 - Select by role and accessible name (`getByRole('button', { name: 'Send' })`), never by CSS class — class names are design tokens here and will change.
 - Assert on the quota wall's text content, since that message is a stated success criterion in `project-overview.md`.
 
