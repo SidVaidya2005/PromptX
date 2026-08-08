@@ -8,6 +8,7 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from '@/lib/constants'
 
+import { toRenderedAttachments } from '@/server/attachments'
 import { getUser } from '@/server/auth'
 import {
   getAttachment,
@@ -128,7 +129,19 @@ export async function POST(_request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    return NextResponse.json(ready)
+    // Signed URLs come back with the row, so the message this attachment is
+    // about to be sent with can render immediately. (F29) The alternative is
+    // object URLs held in client state, which then have to survive the composer
+    // clearing itself and be revoked by whoever ends up owning them — ownership
+    // nobody wants. Signing here costs one call on a path that has just made
+    // three.
+    const [rendered] = await toRenderedAttachments([ready])
+
+    if (!rendered) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    return NextResponse.json(rendered)
   } catch (error) {
     console.error('[api/attachments] confirm failed', error)
     return NextResponse.json(

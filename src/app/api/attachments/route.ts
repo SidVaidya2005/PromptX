@@ -48,6 +48,8 @@ export async function POST(request: Request) {
       mimeType: parsed.data.mimeType,
       sizeBytes: parsed.data.sizeBytes,
       withDerivatives: parsed.data.withDerivatives,
+      inlineWidth: parsed.data.inlineWidth,
+      inlineHeight: parsed.data.inlineHeight,
     })
 
     return NextResponse.json(draft, { status: 201 })

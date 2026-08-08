@@ -48,6 +48,9 @@ type DraftInput = {
   sizeBytes: number
   /** False for a PDF, and for an image whose browser could not derive one. */
   withDerivatives: boolean
+  /** Cosmetic, client-reported, and bounded by the schema. See the migration. */
+  inlineWidth?: number
+  inlineHeight?: number
 }
 
 /**
@@ -91,6 +94,8 @@ export async function createAttachmentDraft(
     storage_path: storagePath,
     thumb_path: thumbPath,
     inline_path: inlinePath,
+    inline_width: input.withDerivatives ? (input.inlineWidth ?? null) : null,
+    inline_height: input.withDerivatives ? (input.inlineHeight ?? null) : null,
     // `position` is left at its default. The real one is assigned by
     // link_attachments_to_message from the order the message was sent in — a
     // draft has no position, because the composer can still reorder it.
@@ -273,6 +278,110 @@ export async function linkAttachmentsToMessage(
   }
 
   return data ?? 0
+}
+
+/**
+ * Every attachment linked to any of these messages, in render order.
+ *
+ * One query for a whole thread rather than one per message: a fifty-message
+ * conversation would otherwise be fifty round trips to draw a handful of
+ * thumbnails. Ordered by `(message_id, position)` so the caller can group
+ * without re-sorting, and `position` is what the composer's arrangement became.
+ */
+export async function listAttachmentsByMessageIds(
+  messageIds: string[],
+): Promise<Attachment[]> {
+  if (messageIds.length === 0) return []
+
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('attachments')
+    .select('*')
+    .in('message_id', messageIds)
+    .order('message_id')
+    .order('position')
+
+  if (error) {
+    console.error('[data/attachments] listAttachmentsByMessageIds failed', error)
+    throw new Error('Failed to load attachments')
+  }
+
+  return data
+}
+
+/**
+ * The bytes of one object, for handing to a model.
+ *
+ * This is the one place an attachment's contents pass through the Node process,
+ * and it is deliberate: the alternative is giving a provider a signed URL, which
+ * is a bearer token for a user's private file sitting in a third party's logs
+ * for as long as it lives. It is rarely even more expensive — a provider that
+ * cannot fetch arbitrary URLs makes the AI SDK download them through here
+ * anyway, just at a moment nothing chose.
+ *
+ * Callers pass `inline_path` for an image, which is a fraction of the original
+ * and is re-sent on every subsequent turn.
+ */
+export async function downloadAttachmentBytes(path: string): Promise<Uint8Array | null> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase.storage.from(BUCKET).download(path)
+
+  if (error || !data) {
+    console.error('[data/attachments] downloadAttachmentBytes failed', error)
+    return null
+  }
+
+  return new Uint8Array(await data.arrayBuffer())
+}
+
+/**
+ * Deletes an attachment and all three of its storage objects.
+ *
+ * Objects first, row second — the reaper's ordering, for the reaper's reason. A
+ * failure between them leaves a row pointing at a file that is gone, which the
+ * next sweep clears harmlessly; the reverse strands the file forever with
+ * nothing left naming it.
+ *
+ * Scoped to unlinked drafts. Once an attachment has been sent with a message it
+ * belongs to the thread, and removing it is a different operation than
+ * withdrawing something from the composer — one this feature does not offer.
+ *
+ * Returns false when nothing matched, which the route turns into a 404.
+ */
+export async function deleteAttachment(id: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const attachment = await getAttachment(id)
+  if (!attachment || attachment.message_id !== null) return false
+
+  const paths = [
+    attachment.storage_path,
+    attachment.thumb_path,
+    attachment.inline_path,
+  ].filter((path): path is string => path !== null)
+
+  const { error: removeError } = await supabase.storage.from(BUCKET).remove(paths)
+
+  if (removeError) {
+    console.error('[data/attachments] could not remove objects', removeError)
+    throw new Error('Failed to remove the attachment')
+  }
+
+  const { data, error } = await supabase
+    .from('attachments')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/attachments] deleteAttachment failed', error)
+    throw new Error('Failed to remove the attachment')
+  }
+
+  return data !== null
 }
 
 /**

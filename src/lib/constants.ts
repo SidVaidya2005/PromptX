@@ -201,13 +201,20 @@ export const ATTACHMENT_DERIVATIVE_MIME = 'image/webp'
 /**
  * How long a signed read URL lives.
  *
- * Short on purpose. The bucket is private and these URLs are the only way to
- * read an object without the owner's JWT, so each one is a bearer token for a
- * file — long enough to render a thread and open a lightbox, short enough that a
- * URL pasted somewhere by accident stops working. They are generated per render,
- * server-side, and never stored.
+ * The bucket is private and these URLs are the only way to read an object
+ * without the owner's JWT, so each one is a bearer token for a file. They are
+ * generated per render, server-side, and never stored.
+ *
+ * An hour rather than F28's five minutes, and the figure is matched to how long
+ * a page is plausibly left open rather than to how long a request takes. An
+ * actively used thread never notices either way — every send calls
+ * `router.refresh()`, which re-renders the server tree and re-signs — so the
+ * only case this covers is a conversation left open and returned to, where five
+ * minutes showed broken images that read as data loss rather than as a security
+ * setting. The cost is a longer window in which a URL copied out of devtools
+ * still reads the file. (F29)
  */
-export const ATTACHMENT_READ_URL_TTL_SECONDS = 5 * 60
+export const ATTACHMENT_READ_URL_TTL_SECONDS = 60 * 60
 
 /**
  * Hard ceiling on a single provider call, enforced with an AbortSignal.

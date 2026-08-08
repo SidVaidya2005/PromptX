@@ -20,12 +20,20 @@ import {
   ATTACHMENT_THUMB_PX,
 } from '@/lib/constants'
 
-import type { Attachment, AttachmentDraft } from '@/types/domain'
+import type { AttachmentDraft, RenderedAttachment } from '@/types/domain'
 
 /** The two webp renderings of one image, or null when none could be made. */
 export type ImageDerivatives = {
   thumb: Blob
   inline: Blob
+  /**
+   * The inline copy's pixel dimensions, reported so `next/image` can carry
+   * explicit width and height and a thread of images does not reflow as it
+   * loads. Cosmetic only — see the migration for why these are the one thing a
+   * client is trusted to report about its own upload.
+   */
+  inlineWidth: number
+  inlineHeight: number
 }
 
 /**
@@ -42,11 +50,15 @@ export type ImageDerivatives = {
  * already carries its own token, so this is a plain `PUT` — the same request
  * `uploadToSignedUrl()` makes, without needing a browser Supabase client here.
  *
- * Throws on any failure. The caller decides what that means: F29's composer
- * marks the file failed and offers a retry, while whatever is already in Storage
- * is left to the reaper rather than cleaned up in a loop.
+ * Throws on any failure, having first deleted whatever it created — so a retry
+ * starts from nothing rather than stacking a second row on the first. The caller
+ * decides what a failure means: F29's composer marks the chip failed, blocks the
+ * send, and offers another go.
  */
-export async function uploadAttachment(file: File): Promise<Attachment> {
+export async function uploadAttachment(
+  file: File,
+  options: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<RenderedAttachment> {
   const derivatives = await createImageDerivatives(file)
 
   const draftResponse = await fetch('/api/attachments', {
@@ -56,7 +68,10 @@ export async function uploadAttachment(file: File): Promise<Attachment> {
       mimeType: file.type,
       sizeBytes: file.size,
       withDerivatives: derivatives !== null,
+      inlineWidth: derivatives?.inlineWidth,
+      inlineHeight: derivatives?.inlineHeight,
     }),
+    signal: options.signal,
   })
 
   if (!draftResponse.ok) {
@@ -65,10 +80,31 @@ export async function uploadAttachment(file: File): Promise<Attachment> {
 
   const draft = (await draftResponse.json()) as AttachmentDraft
 
-  for (const target of draft.uploads) {
+  try {
+    return await sendAndConfirm(draft, file, derivatives, options)
+  } catch (error) {
+    // From here on a failure has left a row behind, and possibly some objects.
+    // The function that created them is the one that knows their id, so it is
+    // the one that cleans up: leaving it to the caller means a caller that
+    // forgets, and leaving it to the reaper means a retry stacking a second row
+    // on top of the first for a day. Best effort — the reaper is still the
+    // backstop if this call fails too.
+    void deleteAttachment(draft.id)
+    throw error
+  }
+}
+
+/** The part of an upload that can fail with a row already in the database. */
+async function sendAndConfirm(
+  draft: AttachmentDraft,
+  file: File,
+  derivatives: ImageDerivatives | null,
+  options: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
+): Promise<RenderedAttachment> {
+  const bodies = draft.uploads.map((target) => {
     const body =
       target.kind === 'original'
-        ? file
+        ? (file as Blob)
         : target.kind === 'thumb'
           ? derivatives?.thumb
           : derivatives?.inline
@@ -76,27 +112,119 @@ export async function uploadAttachment(file: File): Promise<Attachment> {
     // Only reachable if the server issued a derivative URL we did not ask for.
     if (!body) throw new Error(`no body for the ${target.kind} upload`)
 
-    const upload = await fetch(target.signedUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': body.type },
-      body,
-    })
+    return { target, body }
+  })
 
-    // Where the bucket's own limits speak: a file over file_size_limit or off
-    // allowed_mime_types is refused here, by Storage, after every check this
-    // application made had already passed.
-    if (!upload.ok) {
-      throw new Error(`upload of the ${target.kind} object failed (${upload.status})`)
-    }
+  /**
+   * Progress is weighted by bytes across all three objects, not by object count.
+   *
+   * An image's original is often twenty times the size of its thumb, so a bar
+   * that moved a third per completed upload would sit at 66% for almost the
+   * whole wait and then finish instantly — which is the shape of a progress
+   * indicator nobody trusts.
+   */
+  const total = bodies.reduce((sum, { body }) => sum + body.size, 0)
+  const loaded = new Map<string, number>()
+
+  const report = () => {
+    if (!options.onProgress || total === 0) return
+
+    let sent = 0
+    for (const value of loaded.values()) sent += value
+
+    options.onProgress(Math.min(sent / total, 1))
   }
 
-  const confirmed = await fetch(`/api/attachments/${draft.id}/confirm`, { method: 'POST' })
+  for (const { target, body } of bodies) {
+    await put(target.signedUrl, body, options.signal, (bytes) => {
+      loaded.set(target.path, bytes)
+      report()
+    })
+  }
+
+  const confirmed = await fetch(`/api/attachments/${draft.id}/confirm`, {
+    method: 'POST',
+    signal: options.signal,
+  })
 
   if (!confirmed.ok) {
     throw new Error(await errorMessage(confirmed, 'That upload did not finish'))
   }
 
-  return (await confirmed.json()) as Attachment
+  // Signed URLs come back with the row, so the message this is about to be sent
+  // with can draw it without waiting for a server render.
+  return (await confirmed.json()) as RenderedAttachment
+}
+
+/**
+ * Deletes a draft and all three of its storage objects.
+ *
+ * Best-effort by design: a failure here is swallowed and the row is left to the
+ * hourly reaper rather than retried in a loop. The alternative is a composer
+ * that refuses to let go of a file because a cleanup call is failing, which
+ * makes a minor problem into a stuck interface.
+ */
+export async function deleteAttachment(id: string): Promise<void> {
+  try {
+    await fetch(`/api/attachments/${id}`, { method: 'DELETE' })
+  } catch {
+    // See above. The reaper is the backstop and it already exists.
+  }
+}
+
+/**
+ * One object, uploaded with progress.
+ *
+ * `XMLHttpRequest` rather than `fetch`, and this is the whole reason the
+ * transport is not three lines: **fetch cannot report upload progress at all.**
+ * Its `ReadableStream` request bodies are download-shaped and unsupported for
+ * uploads in most browsers, so `xhr.upload.onprogress` is the only way to know
+ * how many bytes have actually left. A 10 MB photo on a hotel connection is
+ * precisely when someone needs to see that something is happening.
+ */
+function put(
+  url: string,
+  body: Blob,
+  signal: AbortSignal | undefined,
+  onBytes: (loaded: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+
+    request.open('PUT', url)
+    request.setRequestHeader('Content-Type', body.type)
+
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onBytes(event.loaded)
+    }
+
+    request.onload = () => {
+      // Where the bucket's own limits speak: a file over file_size_limit or off
+      // allowed_mime_types is refused here, by Storage, after every check this
+      // application made had already passed.
+      if (request.status >= 200 && request.status < 300) {
+        onBytes(body.size)
+        resolve()
+        return
+      }
+
+      reject(new Error(`upload failed (${request.status})`))
+    }
+
+    request.onerror = () => reject(new Error('upload failed'))
+    request.onabort = () => reject(new DOMException('Aborted', 'AbortError'))
+
+    if (signal) {
+      if (signal.aborted) {
+        request.abort()
+        return
+      }
+
+      signal.addEventListener('abort', () => request.abort(), { once: true })
+    }
+
+    request.send(body)
+  })
 }
 
 /** The route's own sentence when there is one, since every one of them is safe to show. */
@@ -141,7 +269,12 @@ export async function createImageDerivatives(
 
     if (!thumb || !inline) return null
 
-    return { thumb, inline }
+    return {
+      thumb,
+      inline: inline.blob,
+      inlineWidth: inline.width,
+      inlineHeight: inline.height,
+    }
   } catch {
     // Deliberately silent and deliberately total. Every failure in here means
     // the same thing — no derivatives — and there is nothing a user could do
@@ -190,7 +323,9 @@ async function renderThumb(bitmap: ImageBitmap): Promise<Blob | null> {
  * its own size, so a 200px avatar does not become a blurry 1440px one that is
  * also several times larger than the file it was derived from.
  */
-async function renderInline(bitmap: ImageBitmap): Promise<Blob | null> {
+async function renderInline(
+  bitmap: ImageBitmap,
+): Promise<{ blob: Blob; width: number; height: number } | null> {
   const longest = Math.max(bitmap.width, bitmap.height)
   const scale = longest > ATTACHMENT_INLINE_MAX_PX ? ATTACHMENT_INLINE_MAX_PX / longest : 1
 
@@ -203,5 +338,12 @@ async function renderInline(bitmap: ImageBitmap): Promise<Blob | null> {
 
   context.drawImage(bitmap, 0, 0, width, height)
 
-  return canvas.convertToBlob({ type: ATTACHMENT_DERIVATIVE_MIME })
+  // The dimensions come back with the blob rather than being re-derived by a
+  // caller: they are what this function just decided, and anything else reading
+  // them off the encoded file would have to decode it again.
+  return {
+    blob: await canvas.convertToBlob({ type: ATTACHMENT_DERIVATIVE_MIME }),
+    width,
+    height,
+  }
 }
