@@ -422,6 +422,127 @@ describe('public share links', () => {
   })
 })
 
+describe('a share link read by somebody who is signed in', () => {
+  /**
+   * **The trap F33 was built around, pinned so nobody removes the anon client.**
+   *
+   * F03's share policies are `for select to anon`, and Postgres applies a policy
+   * only when the current role matches. Supabase resolves a signed-in JWT to
+   * `authenticated` — so a signed-in visitor opening a colleague's share link
+   * through the ordinary cookie-bound client sees NOTHING, which is the common
+   * case rather than an edge one.
+   *
+   * That is why `/share/[slug]` reads through `createAnonSupabaseClient()`. This
+   * test asserts the gap exists, so that anyone who later "simplifies" the share
+   * page onto the cookie-bound client is told why it does not work — and anyone
+   * who instead widens the policies to `to anon, authenticated` finds out here
+   * that they have just put every shared conversation into every user\'s sidebar,
+   * because `listConversations()` carries no user filter by design.
+   */
+  it('is invisible to the authenticated role and visible to the anon one', async () => {
+    await admin
+      .from('conversations')
+      .update({ share_slug: 'role-gap-slug', shared_at: new Date().toISOString() })
+      .eq('id', alice.conversationId)
+
+    try {
+      // Bob is signed in. The anon policy does not apply to his role, and he does
+      // not own the row, so he gets nothing — through the very client the app
+      // uses everywhere else.
+      const { data: asAuthenticated } = await bob.client
+        .from('conversations')
+        .select('id')
+        .eq('share_slug', 'role-gap-slug')
+
+      expect(asAuthenticated).toEqual([])
+
+      // The same key with no session resolves to `anon`, and the policy applies.
+      const { data: asAnon } = await stranger
+        .from('conversations')
+        .select('id')
+        .eq('share_slug', 'role-gap-slug')
+
+      expect(asAnon?.map((row) => row.id)).toEqual([alice.conversationId])
+    } finally {
+      await admin
+        .from('conversations')
+        .update({ share_slug: null, shared_at: null })
+        .eq('id', alice.conversationId)
+    }
+  })
+})
+
+describe('attachment metadata on a shared conversation', () => {
+  /**
+   * F33 added the anon policy this exercises. The distinction it draws is the
+   * whole point: the ROW becomes readable so the share page can say a file was
+   * attached, and the OBJECT does not, because the bucket policies stay
+   * owner-scoped. A placeholder is what that difference looks like on screen.
+   */
+  it('is readable only while shared, and never as an object', async () => {
+    const { data: attachment, error: insertError } = await admin
+      .from('attachments')
+      .insert({
+        user_id: alice.id,
+        message_id: alice.messageId,
+        storage_path: `${alice.id}/share-probe.png`,
+        mime_type: 'image/png',
+        size_bytes: 1234,
+        status: 'ready',
+      })
+      .select('id')
+      .single()
+
+    if (insertError) throw insertError
+
+    try {
+      // Not shared yet: the row is invisible, exactly like its conversation.
+      const { data: before } = await stranger
+        .from('attachments')
+        .select('id')
+        .eq('id', attachment.id)
+
+      expect(before).toEqual([])
+
+      await admin
+        .from('conversations')
+        .update({ share_slug: 'attachment-probe', shared_at: new Date().toISOString() })
+        .eq('id', alice.conversationId)
+
+      const { data: shared } = await stranger
+        .from('attachments')
+        .select('id, mime_type')
+        .eq('id', attachment.id)
+
+      expect(shared?.map((row) => row.mime_type)).toEqual(['image/png'])
+
+      // The bytes stay private. Sharing a conversation publishes what was said,
+      // never the files — which is why the page renders a placeholder and must
+      // never reach for a signed URL.
+      const { error: downloadError } = await stranger.storage
+        .from('attachments')
+        .download(`${alice.id}/share-probe.png`)
+
+      expect(downloadError).not.toBeNull()
+
+      // Revoking closes the row again, through the same column.
+      await admin
+        .from('conversations')
+        .update({ share_slug: null, shared_at: null })
+        .eq('id', alice.conversationId)
+
+      const { data: after } = await stranger
+        .from('attachments')
+        .select('id')
+        .eq('id', attachment.id)
+
+      expect(after).toEqual([])
+    } finally {
+      await admin.from('attachments').delete().eq('id', attachment.id)
+    }
+  })
+})
+
 describe('attachment storage', () => {
   it('keeps one user out of another’s object prefix', async () => {
     const path = `${bob.id}/probe.png`
