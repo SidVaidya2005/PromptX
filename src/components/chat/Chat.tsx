@@ -11,6 +11,7 @@ import type { ChatMessage } from '@/lib/messages'
 import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 
 import { Composer } from '@/components/chat/Composer'
+import { GenerationAnnouncer } from '@/components/chat/GenerationAnnouncer'
 import { requestTitle } from '@/components/chat/request-title'
 import { Thread, type AttachmentsByMessage } from '@/components/chat/Thread'
 import { ThreadHeader } from '@/components/chat/ThreadHeader'
@@ -602,7 +603,17 @@ export function Chat({
         />
       )}
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <GenerationAnnouncer status={status} messages={messages} />
+
+      {/* aria-busy tells a reader who navigates into a half-written answer that
+          it is still changing. The announcements themselves live in the
+          component above — see its note on why the thread is not the live
+          region. (F37) */}
+      <div
+        ref={scrollRef}
+        aria-busy={isStreaming}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : (
