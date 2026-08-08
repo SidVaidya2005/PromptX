@@ -167,6 +167,7 @@ PromptX/
 │   │   └── api/
 │   │       ├── attachments/
 │   │       │   ├── route.ts        → issue signed upload URLs against a pending row
+│   │       │   ├── [id]/route.ts   → withdraw a draft: three objects, then the row
 │   │       │   └── [id]/confirm/route.ts
 │   │       │                       → measure what landed, then mark the row ready
 │   │       ├── chat/route.ts       → streaming chat completion
@@ -191,6 +192,8 @@ PromptX/
 │   │   ├── vault.ts                → AES-256-GCM encrypt / decrypt for provider keys
 │   │   ├── keys.ts                 → store, read, and resolve a user's provider key
 │   │   ├── providers.ts            → resolveModel(): provider + key → AI SDK model
+│   │   ├── attachments.ts          → rows → signed URLs for rendering, and → file
+│   │                                 parts with the bytes inlined for a model
 │   │   ├── quota.ts                → shared-key daily allowance + global circuit breaker
 │   │   └── data/                   → all database access, one module per table
 │   │       ├── conversations.ts
@@ -543,7 +546,9 @@ stable and cannot collide.
 - **An image attachment is three storage objects, not one:** the original, a `_thumb` (80px square, for the 40px composer chip at 2×), and an `_inline` (1440px longest edge, for the message column). Both derivatives are produced **in the browser before upload** and sent through their own signed URLs, so no image is ever transformed on the request path. PDFs have no derivatives and leave both columns null.
 - **Every path that deletes an attachment deletes all three objects.** The reaper, the failed-upload cleanup, and the message-delete sweep each remove `storage_path`, `thumb_path`, and `inline_path`. A cleanup that only knows about the original strands two objects per image — manufacturing the exact leak the reaper exists to prevent, at twice the rate.
 - Derived objects are validated server-side on the same terms as the original: each signed upload URL is issued against the mime allowlist and `MAX_ATTACHMENT_BYTES`. The client produces the derivatives; it is not trusted to have produced them honestly.
-- Sending a message links only `status = 'ready'` rows. A `'pending'` or `'failed'` attachment is dropped from the send and reported to the user rather than silently omitted.
+- Sending a message links only `status = 'ready'` rows. A `'pending'` attachment blocks the send and is reported rather than silently omitted. **`'failed'` is never written** — a failed upload deletes its row and objects and the composer's failed state is local, because the send path already refuses anything that is not `'ready'` and a status no code consults is decoration. The check constraint keeps the value available. (F29)
+- **The model is sent `inline_path`, with the bytes read out of Storage and inlined.** No signed URL is ever handed to a provider — it is a bearer token for a private file. Every turn that has attachments carries them, not only the newest, so a follow-up about an image works; the cost is that each one is re-sent and re-billed per turn, which is why it is the derivative rather than the original. (F29)
+- **`inline_width` and `inline_height` are client-reported and cosmetic**, existing only so `next/image` can carry explicit dimensions. They are the one deliberate exemption from the measured-not-claimed rule above, bounded by the schema, and nothing may depend on them for anything else. (F29)
 - An upload that fails or is cancelled sets `status = 'failed'`; the client deletes the row and its storage object immediately. If that cleanup call itself fails, the row is left for the reaper rather than retried in a loop.
 - **Orphan reaping** runs hourly: `pg_cron` invokes a Supabase Edge Function via `pg_net`, which deletes the storage objects through the Storage API and *then* the rows. It cannot be a plain SQL job — deleting a `storage.objects` row does not delete the file, it strands it in the bucket permanently. A SQL-only reaper would manufacture the exact leak it was written to prevent.
 - Deleting a message cascades to its attachment rows. Because that cascade cannot touch storage, the same Edge Function also sweeps objects whose row no longer exists.

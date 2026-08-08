@@ -69,6 +69,30 @@ At that phase's checkpoint, the whole phase collapses to:
 - **Editing a message cannot change its attachments** — the pairing is refused outright rather than half-honoured. Nothing in §28–§30 asks for it.
 - **The reaper's two passes have no scheduled proof.** They were verified by invoking the function directly against seeded fixtures; the hourly job is confirmed to reach it and return 200, but F02's lesson says a green run is not evidence of work done. Worth re-checking at the Phase 5 checkpoint with a real orphan aged past the TTL.
 
+### Feature 29 — Attachment interface  *(2026-08-08)*
+
+- Decision: **every turn with attachments carries file parts, not just the newest**, and the bytes are **inlined as data URLs** rather than passed as signed URLs. A conversation about an image is unusable otherwise and fails silently; a signed URL given to a provider is a bearer token for a private file. The `_inline` derivative is what gets sent, because it is re-sent on every later turn.
+- Decision: **the server builds those parts from the rows it already validated.** `chatSendSchema` stays text-only and `.strict()`, so nothing a client puts in a message part can reach a model.
+- Decision: **attachments travel beside the messages, keyed by message id**, and are re-keyed in `adoptPersistedPromptId()` alongside the message. Parts would not work: a just-sent message lives only in `useChat` state.
+- Decision: **`status = 'failed'` is never written.** A failed upload deletes its row and objects and the chip's failed state is local — the send path already refuses anything not `'ready'`, so a persisted status nothing reads would be decoration.
+- Decision: a migration adds `inline_width`/`inline_height`, the **one client-reported thing** on the row, bounded by the schema and cosmetic by construction — `code-standards.md` requires explicit `next/image` dimensions and nothing recorded them.
+- Decision: read URLs went from five minutes to an hour, matched to how long a page is left open rather than how long a request takes.
+- Gotcha: **every file uploaded twice.** Uploads were started inside the `setState` updater that adds the chip, and StrictMode double-invokes updaters in development — two rows, six objects, two confirms per attachment, one leaking. Nothing on screen differed. Found by counting rows after a two-file test. Fixed by moving the start into an effect with a `started` guard (effects double-run too), and the same audit found `remove()` and `clear()` doing side effects in their updaters as well.
+- Gotcha: **`sendMessage({messageId})` is a replace primitive** — it throws on an unknown id and truncates after it. Minting an id for a new message means passing a whole message object. Read off the installed SDK.
+- Gotcha: **a comment claimed a delete that never happened.** The hook's catch said the row was deleted; nothing deleted it. Made true by having `uploadAttachment` clean up what it created, so a retry starts from nothing.
+- Gotcha: `playwright-cli` snapshot refs gained an `f1e`/`f3e` prefix after navigation and an `[active]` marker before `[ref=…]` — two greps silently matched nothing and read as broken features for several minutes. Match the ref, not the shape of the line.
+- Verified: **the model sees it.** One image and "what shape and colour?" → *"The image features a white circle on a red background."* Two turns later, nothing attached: *"The shape in the picture was a white circle."* Two images at once → *"Image 1: A white circle centered on a red background. Image 2: A horizontal black stripe across a blue background."* — in the order attached.
+- Verified: real byte progress on a 9 MB file (0 → 14 → 61 → 100%), send disabled throughout; positions 0 and 1 in the database matching chip order; the same order rendered, and still right after a reload through the server path; the lightbox opening `storage_path` and not `_inline`; removal taking the row and all three objects (3 → 0); drag-and-drop adding a file.
+- Verified: the failure path by mutation — breaking the upload URL gave a failed chip, a retry control, a disabled send and the sentence naming why; the row was cleaned up (0 drafts left); reverting and retrying recovered both files and unblocked the send.
+- Verified: mutations on the new tests — flipping the file/text order turns two red, rebuilding untouched messages turns the other two red. 383 tests, typecheck, lint and a production build green.
+
+**Open after F29.**
+
+- **No filename is stored**, so a sent PDF renders as a chip that says "PDF". The composer knows the name from the `File`; the database has no column for it. Fine for one attachment, poor for three. Worth a column if F30 or the Phase 5 checkpoint agrees.
+- **Capability gating is still F30's.** Attaching a PDF to a text-only model reaches the provider and fails there.
+- **Attachment-only messages are refused**, because the route requires non-empty text and the composer agrees. Nobody has asked for the alternative.
+- **A Next hint that inline images should carry `loading="eager"`** when they are the LCP element. Advisory; worth a look in F37's pass.
+
 ## Phase 4 — Prompt library and search *(compacted)*
 
 Four features on 2026-08-08, over two tables F02 had built and nothing had ever

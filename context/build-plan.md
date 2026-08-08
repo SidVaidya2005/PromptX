@@ -685,6 +685,19 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Attachments render in `position` order, both in the composer and in the sent message
 - Attachments converted to AI SDK file parts on send
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **Every turn that has attachments carries file parts, not just the newest one.** A conversation about an image is unusable otherwise, and the failure is silent — the model answers confidently about nothing. The accepted cost is that the same image is re-sent and re-billed each turn, which on the shared key spends the daily allowance faster than text does
+- **The bytes are fetched server-side and inlined; no signed URL ever reaches a provider.** A signed URL handed to Google is a bearer token for a user's private file sitting in a third party's logs for its lifetime. It is rarely even cheaper: when a provider does not accept arbitrary URLs the AI SDK downloads them through this process anyway, so passing a URL becomes the same byte path with less control over when
+- **The model is sent `inline_path`, not the original.** 1440px webp is ample for a model and a fraction of the bytes, which matters precisely because it is re-sent every turn. PDFs and derivative-less images fall back to `storage_path`
+- **The server builds those file parts from the rows it has already validated, never from the client's message parts.** `chatSendSchema` stays text-only and `.strict()`; a file part the schema accepted would let a client hand the model arbitrary content, which is the same class of thing as rewriting its own history
+- **Attachments travel beside the messages, keyed by message id — not as SDK parts.** `Chat` holds a map seeded from the server; on send the entry is keyed to the client-minted id and moved when `data-prompt-message` reports the real row, reusing F19's re-keying exactly. Without it a just-sent message shows nothing until a navigation, because `router.refresh()` does not touch `useChat` state
+- **Progress is real bytes, via `XMLHttpRequest`** — `fetch` cannot report upload progress at all — weighted across the original and its two derivatives
+- **Failure is local plus a delete, and the persisted `'failed'` status therefore stays unused.** A failed upload deletes all three objects and then the row, and the chip offers a retry that starts a fresh draft. The check constraint keeps the value available, but nothing writes it and nothing reads it: the send path already refuses anything that is not `'ready'`, so a status no code consults would be bookkeeping pretending to be a state machine
+- **A migration adds `inline_width` and `inline_height`**, because `code-standards.md` requires explicit dimensions on every `next/image` and nothing recorded them. **Client-reported and cosmetic-only** — a wrong value costs a layout wobble, not a breach — which is the one deliberate exemption from F28's measured-not-claimed rule
+- **`ATTACHMENT_READ_URL_TTL_SECONDS` goes to one hour**, matched to how long a page is plausibly left open rather than to how long a request takes
+- **Capability gating stays in F30.** F29 can send a PDF to a text-only model and get the provider's own error; the catalog flags exist and nothing reads them yet
+
 ### 30 Capability gating
 
 **UI:**
