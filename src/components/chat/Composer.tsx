@@ -5,11 +5,12 @@ import Link from 'next/link'
 
 import { ArrowUpIcon, PaperclipIcon, SquareIcon } from 'lucide-react'
 
+import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 import {
-  ALLOWED_ATTACHMENT_MIME_TYPES,
-  SHARED_KEY_DAILY_MESSAGE_LIMIT,
-} from '@/lib/constants'
-import { willUseSharedKey } from '@/lib/models'
+  acceptedMimeTypes,
+  findModel,
+  willUseSharedKey,
+} from '@/lib/models'
 import { insertPromptAt } from '@/lib/prompts'
 import { cn } from '@/lib/utils'
 
@@ -19,7 +20,23 @@ import { PromptPicker } from '@/components/chat/PromptPicker'
 import { QuotaMeter } from '@/components/chat/QuotaMeter'
 import { SystemPromptControl } from '@/components/chat/SystemPromptControl'
 import { useAttachmentUploads } from '@/components/chat/use-attachment-uploads'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 import type { Provider, RenderedAttachment } from '@/types/domain'
 
@@ -69,7 +86,27 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
 
-  const attachments = useAttachmentUploads()
+  /**
+   * What the selected model will read, and the only thing that decides it. (F30)
+   *
+   * Four surfaces downstream of this one call: the attach button's state, the
+   * file input's `accept`, the hook's own rejection of a dropped file, and the
+   * warning before a model change drops what it cannot read. The server asks the
+   * same function about the rows, which is the enforcement.
+   */
+  const accepted = acceptedMimeTypes(provider, modelId)
+  const acceptsNothing = accepted.length === 0
+  const modelLabel = findModel(provider, modelId)?.label ?? modelId
+
+  const attachments = useAttachmentUploads({ accepted, modelLabel })
+
+  /** A model change waiting on confirmation, because it would drop files. */
+  const [pendingModel, setPendingModel] = useState<{
+    provider: Provider
+    modelId: string
+    label: string
+    casualties: string[]
+  } | null>(null)
 
   // Whether the allowance applies at all is a property of the SELECTED model,
   // not of the user. Someone with an OpenRouter key who has spent their shared
@@ -116,6 +153,46 @@ export function Composer({
 
     const textarea = textareaRef.current
     if (textarea) textarea.style.height = 'auto'
+  }
+
+  /**
+   * Applies a model choice, asking first when it would cost somebody a file. (F30)
+   *
+   * Only the *incompatible* attachments are at risk, which is the per-file-type
+   * gate followed through: switching to a model that reads images but not PDFs
+   * with one of each drops the PDF and keeps the image. Anything coarser would
+   * take a file the new model was perfectly happy with.
+   *
+   * "Dropped" means deleted — the row and all three of its objects, through the
+   * same path the chip's own remove control takes. A file left in Storage that
+   * nothing points at is the leak F28 built a reaper for.
+   */
+  function requestModelChange(nextProvider: Provider, nextModelId: string) {
+    const nextAccepted = acceptedMimeTypes(nextProvider, nextModelId)
+    const casualties = attachments.items.filter(
+      (item) => !nextAccepted.includes(item.mimeType),
+    )
+
+    if (casualties.length === 0) {
+      onSelectModel(nextProvider, nextModelId)
+      return
+    }
+
+    setPendingModel({
+      provider: nextProvider,
+      modelId: nextModelId,
+      label: findModel(nextProvider, nextModelId)?.label ?? nextModelId,
+      casualties: casualties.map((item) => item.localId),
+    })
+  }
+
+  function confirmModelChange() {
+    if (!pendingModel) return
+
+    for (const localId of pendingModel.casualties) attachments.remove(localId)
+
+    onSelectModel(pendingModel.provider, pendingModel.modelId)
+    setPendingModel(null)
   }
 
   function chooseFiles(list: FileList | null) {
@@ -340,27 +417,66 @@ export function Composer({
               ref={fileInputRef}
               type="file"
               multiple
-              accept={ALLOWED_ATTACHMENT_MIME_TYPES.join(',')}
+              // Narrowed to what THIS model reads, not to what PromptX allows.
+              // It only filters the file chooser — a drop bypasses it entirely,
+              // which is why the hook checks the mime again and the server
+              // checks the rows after that. (F30)
+              accept={accepted.join(',')}
               onChange={(event) => chooseFiles(event.target.files)}
               className="hidden"
               tabIndex={-1}
               aria-hidden
             />
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              // Mid-stream for the same reason as the controls beside it: the
-              // request in flight cannot gain an attachment, and offering it
-              // would imply otherwise. Feature 30 adds the other gate, on models
-              // that accept no files at all.
-              disabled={isStreaming || blocked}
-              onClick={() => fileInputRef.current?.click()}
-              aria-label="Attach a file"
-            >
-              <PaperclipIcon />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    // Mid-stream for the same reason as the controls beside it:
+                    // the request in flight cannot gain an attachment, and
+                    // offering it would imply otherwise.
+                    disabled={isStreaming || blocked}
+                    /**
+                     * `aria-disabled` rather than `disabled` for the capability
+                     * case, and the difference is the whole tooltip. (F30)
+                     *
+                     * A disabled button fires no pointer events, so Radix never
+                     * sees a hover and the tooltip explaining WHY it is
+                     * unavailable would be the one thing on screen nobody could
+                     * reach. This keeps it focusable and hoverable while the
+                     * click does nothing.
+                     */
+                    aria-disabled={acceptsNothing}
+                    onClick={() => {
+                      if (acceptsNothing) return
+                      fileInputRef.current?.click()
+                    }}
+                    className={cn(acceptsNothing && 'text-mute opacity-50')}
+                    aria-label="Attach a file"
+                  >
+                    <PaperclipIcon />
+                  </Button>
+                </TooltipTrigger>
+
+                {/* Only when there is something to explain. A tooltip that
+                    repeats the button's own label is noise on every hover. */}
+                {acceptsNothing && (
+                  <TooltipContent>
+                    {/* `{' '}` rather than a literal space, because the literal
+                        one did not survive: the DOM read
+                        "DeepSeek V4 Flashcan't read files" with the source
+                        plainly showing a space between the expression and the
+                        text. Measured in the browser, not reasoned about. */}
+                    {modelLabel}
+                    {' '}
+                    can&rsquo;t read files. Pick another model to attach one.
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
 
             <ModelPicker
               provider={provider}
@@ -369,7 +485,7 @@ export function Composer({
               // Choosing mid-stream cannot affect the request already in flight,
               // and offering it would imply otherwise.
               disabled={isStreaming}
-              onSelect={onSelectModel}
+              onSelect={requestModelChange}
             />
 
             {/* Beside the picker because it answers the same question: what the
@@ -421,6 +537,42 @@ export function Composer({
           )}
         </div>
       </form>
+
+      {/* An AlertDialog rather than a Dialog, per the rule F11 established: it
+          carries role="alertdialog", drops outside-click dismissal, and focuses
+          Cancel rather than the button that destroys something. Mounted only
+          while open, per F24 — Radix calls onOpenChange only for changes it
+          initiates, so a dialog left mounted with an `open` prop never hears
+          about a parent opening it. */}
+      {pendingModel && (
+        <AlertDialog open onOpenChange={(open) => !open && setPendingModel(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Switch to {pendingModel.label}?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                It can&rsquo;t read{' '}
+                <span className="text-body-strong">
+                  {pendingModel.casualties.length}{' '}
+                  {pendingModel.casualties.length === 1 ? 'file' : 'files'}
+                </span>{' '}
+                you&rsquo;ve attached, so {pendingModel.casualties.length === 1
+                  ? 'it'
+                  : 'they'}{' '}
+                will be removed. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmModelChange}>
+                Switch and remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   )
 }

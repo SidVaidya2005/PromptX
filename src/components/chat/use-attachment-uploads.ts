@@ -50,7 +50,18 @@ type State = {
  * original bytes and nothing renders from them. Keeping them in state would put
  * a 10 MB object into every re-render's comparison for no reason.
  */
-export function useAttachmentUploads() {
+export function useAttachmentUploads({
+  accepted,
+  modelLabel,
+}: {
+  /**
+   * What the selected model will read. A subset of the application's own
+   * allowlist, and the distinction is what lets the rejection below say which
+   * of the two rules refused a file. (F30)
+   */
+  accepted: readonly string[]
+  modelLabel: string
+}) {
   const [state, setState] = useState<State>({ items: [], error: null })
   const files = useRef(new Map<string, File>())
 
@@ -126,11 +137,11 @@ export function useAttachmentUploads() {
     (incoming: readonly File[]) => {
       setState((current) => {
         const room = MAX_ATTACHMENTS_PER_MESSAGE - current.items.length
-        const accepted: PendingAttachment[] = []
+        const queued: PendingAttachment[] = []
         let error: string | null = null
 
         for (const file of incoming) {
-          if (accepted.length >= room) {
+          if (queued.length >= room) {
             error = `You can attach up to ${MAX_ATTACHMENTS_PER_MESSAGE} files to one message.`
             break
           }
@@ -138,6 +149,17 @@ export function useAttachmentUploads() {
           const allowed: readonly string[] = ALLOWED_ATTACHMENT_MIME_TYPES
           if (!allowed.includes(file.type)) {
             error = `${file.name} is not a supported file type.`
+            continue
+          }
+
+          // Checked here as well as by the input's `accept`, because `accept`
+          // does not constrain a drop — and the server checks the rows again
+          // regardless, since neither of these constrains a crafted request.
+          // Two different refusals with two different sentences: the one above
+          // is what PromptX accepts at all, this one is what the chosen model
+          // can read. (F30)
+          if (!accepted.includes(file.type)) {
+            error = `${modelLabel} can’t read ${file.name}.`
             continue
           }
 
@@ -149,7 +171,7 @@ export function useAttachmentUploads() {
           const localId = crypto.randomUUID()
           files.current.set(localId, file)
 
-          accepted.push({
+          queued.push({
             localId,
             name: file.name,
             mimeType: file.type,
@@ -168,10 +190,10 @@ export function useAttachmentUploads() {
 
         // Nothing is started here. This updater is pure, and the effect below is
         // what begins an upload — see the note on `started`.
-        return { items: [...current.items, ...accepted], error }
+        return { items: [...current.items, ...queued], error }
       })
     },
-    [],
+    [accepted, modelLabel],
   )
 
   /**
