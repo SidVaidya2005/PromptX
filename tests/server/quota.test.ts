@@ -63,12 +63,23 @@ async function createActor(): Promise<Actor> {
   return { id: created.user.id, client }
 }
 
-/** Puts the counter at a known value, through the admin client. */
-async function setCount(count: number): Promise<void> {
+/**
+ * Puts the counters at known values, through the admin client.
+ *
+ * `compareCount` is F31's second counter — how many of today's claimed slots
+ * will never be backed by a `messages` row. Defaulted to zero so every test
+ * written before it existed still describes the same situation.
+ */
+async function setCount(count: number, compareCount = 0): Promise<void> {
   const { error } = await admin
     .from('shared_key_usage')
     .upsert(
-      { user_id: user.id, usage_date: today(), message_count: count },
+      {
+        user_id: user.id,
+        usage_date: today(),
+        message_count: count,
+        compare_count: compareCount,
+      },
       { onConflict: 'user_id,usage_date' },
     )
 
@@ -78,7 +89,7 @@ async function setCount(count: number): Promise<void> {
 async function readRow() {
   const { data, error } = await admin
     .from('shared_key_usage')
-    .select('message_count, input_tokens, output_tokens, updated_at')
+    .select('message_count, compare_count, input_tokens, output_tokens, updated_at')
     .eq('user_id', user.id)
     .eq('usage_date', today())
     .maybeSingle()
@@ -91,6 +102,15 @@ function reserve(actor: Actor = user) {
   return actor.client.rpc('reserve_shared_slot', {
     p_user_id: actor.id,
     p_limit: SHARED_KEY_DAILY_MESSAGE_LIMIT,
+  })
+}
+
+/** What `/api/compare` claims: a slot that will leave no messages row. (F31) */
+function reserveUnpersisted(actor: Actor = user) {
+  return actor.client.rpc('reserve_shared_slot', {
+    p_user_id: actor.id,
+    p_limit: SHARED_KEY_DAILY_MESSAGE_LIMIT,
+    p_persisted: false,
   })
 }
 
@@ -181,6 +201,47 @@ describe('reserve_shared_slot', () => {
     expect((await readRow())?.message_count).toBe(SHARED_KEY_DAILY_MESSAGE_LIMIT)
   })
 
+  it('leaves compare_count alone for a generation that will be persisted', async () => {
+    // The default, and the half that would break the ordinary send path if it
+    // ever moved: a chat message is counted once by its own row and would be
+    // counted a second time by this column, so the sweep would raise nobody's
+    // allowance but would refuse to lower a counter that should have come down.
+    await reserve()
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(1)
+    expect(row?.compare_count).toBe(0)
+  })
+
+  it('counts an unpersisted claim on both counters, in one statement', async () => {
+    // /api/compare's whole quota contract. message_count is what the limit is
+    // tested against, so a comparison spends the same allowance a message does;
+    // compare_count is the evidence the sweep needs, because there will be no
+    // messages row for it to find.
+    const { data, error } = await reserveUnpersisted()
+
+    expect(error).toBeNull()
+    expect(data).toBe(1)
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(1)
+    expect(row?.compare_count).toBe(1)
+  })
+
+  it('refuses an unpersisted claim at the same limit, without moving either counter', async () => {
+    // A comparison is not a way around the cap. Both counters must hold still on
+    // a refusal, or a spent allowance would still be accumulating evidence that
+    // the sweep would later treat as slots to preserve.
+    await setCount(SHARED_KEY_DAILY_MESSAGE_LIMIT)
+
+    const refused = await reserveUnpersisted()
+    expect(refused.data).toBeNull()
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(SHARED_KEY_DAILY_MESSAGE_LIMIT)
+    expect(row?.compare_count).toBe(0)
+  })
+
   it('touches updated_at, which the reconciliation sweep depends on', async () => {
     // Load-bearing rather than bookkeeping: the sweep treats a row untouched for
     // five minutes as holding an orphaned reservation. A function that leaves
@@ -244,6 +305,49 @@ describe('release_shared_slot', () => {
     await user.client.rpc('release_shared_slot', { p_user_id: user.id })
 
     expect((await readRow())?.message_count).toBe(0)
+  })
+
+  it('lowers compare_count with the slot when the generation was never persisted', async () => {
+    // A stopped comparison. The two counters have to fall together or the row is
+    // left claiming evidence for a slot message_count no longer holds — and the
+    // sweep, which only ever lowers message_count, would never correct it.
+    await setCount(3, 2)
+
+    await user.client.rpc('release_shared_slot', {
+      p_user_id: user.id,
+      p_persisted: false,
+    })
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(2)
+    expect(row?.compare_count).toBe(1)
+  })
+
+  it('floors compare_count at zero too', async () => {
+    // /api/compare reaches onAbort and onError for one request just as /api/chat
+    // does, so the double release is the same real path. A negative here would
+    // make the sweep's `actual` smaller than the truth and refund a live slot.
+    await setCount(1, 1)
+
+    await user.client.rpc('release_shared_slot', { p_user_id: user.id, p_persisted: false })
+    await user.client.rpc('release_shared_slot', { p_user_id: user.id, p_persisted: false })
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(0)
+    expect(row?.compare_count).toBe(0)
+  })
+
+  it('leaves compare_count alone when refunding an ordinary message', async () => {
+    // The mismatch that would be silent: releasing a chat slot must not consume
+    // a comparison's evidence, or the next sweep hands that comparison's slot
+    // back and the daily cap quietly stops applying to it.
+    await setCount(3, 1)
+
+    await user.client.rpc('release_shared_slot', { p_user_id: user.id })
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(2)
+    expect(row?.compare_count).toBe(1)
   })
 
   it('touches updated_at', async () => {
@@ -341,6 +445,49 @@ describe('reconcile_shared_key_usage', () => {
     await admin.rpc('reconcile_shared_key_usage')
 
     expect((await readRow())?.message_count).toBe(3)
+  })
+
+  it('does not refund a comparison, which leaves no message row to find', async () => {
+    /**
+     * **The defect this counter exists to prevent.** (F31)
+     *
+     * The sweep reconciles `message_count` against `messages`, and a comparison
+     * persists nothing — so before `compare_count` existed, both slots a
+     * comparison claimed came back within ten minutes and `/compare` obeyed no
+     * daily cap at all: two generations per click, unbounded, with only the
+     * global monthly breaker between a user and the shared key.
+     *
+     * Seeded through the function rather than with setCount, so what is being
+     * tested is the pair of writes the route actually makes.
+     */
+    await reserveUnpersisted()
+    await reserveUnpersisted()
+    await ageRow(10)
+
+    await admin.rpc('reconcile_shared_key_usage')
+
+    const row = await readRow()
+    expect(row?.message_count).toBe(2)
+    expect(row?.compare_count).toBe(2)
+  })
+
+  it('reconciles a mixed day down to the messages plus the comparisons', async () => {
+    // The case that separates "counts comparisons" from "gave up and stopped
+    // reconciling". One delivered message, one comparison, and two slots that
+    // are genuine orphans — the sweep must still take those two back.
+    const conversationId = await seedDeliveredSharedMessage()
+
+    try {
+      await setCount(4, 1)
+      await ageRow(10)
+
+      await admin.rpc('reconcile_shared_key_usage')
+
+      // 1 delivered message + 1 comparison. The other two were orphans.
+      expect((await readRow())?.message_count).toBe(2)
+    } finally {
+      await admin.from('conversations').delete().eq('id', conversationId)
+    }
   })
 
   it('only ever lowers, so it cannot charge for what the reservation missed', async () => {

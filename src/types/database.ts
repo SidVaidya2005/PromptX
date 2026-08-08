@@ -296,6 +296,7 @@ export type Database = {
       }
       shared_key_usage: {
         Row: {
+          compare_count: number
           input_tokens: number
           message_count: number
           output_tokens: number
@@ -304,6 +305,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          compare_count?: number
           input_tokens?: number
           message_count?: number
           output_tokens?: number
@@ -312,6 +314,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          compare_count?: number
           input_tokens?: number
           message_count?: number
           output_tokens?: number
@@ -361,9 +364,12 @@ export type Database = {
         }
         Returns: undefined
       }
-      release_shared_slot: { Args: { p_user_id: string }; Returns: undefined }
+      release_shared_slot: {
+        Args: { p_persisted?: boolean; p_user_id: string }
+        Returns: undefined
+      }
       reserve_shared_slot: {
-        Args: { p_limit: number; p_user_id: string }
+        Args: { p_limit: number; p_persisted?: boolean; p_user_id: string }
         Returns: number
       }
       search_has_terms: { Args: { query: string }; Returns: boolean }

@@ -67,6 +67,24 @@ export async function isSharedKeyAvailable(): Promise<boolean> {
 }
 
 /**
+ * Whether the generation this slot pays for will leave a `messages` row. (F31)
+ *
+ * **This is not a preference, it is what keeps the daily cap enforceable.** The
+ * reconciliation sweep derives truth from `messages` — for a row untouched for
+ * five minutes it sets `message_count` to the number of complete shared-key
+ * assistant messages that day. A caller that spends the shared key and persists
+ * nothing is therefore invisible to it, and every slot it claimed comes back
+ * within ten minutes. `persisted: false` puts the claim in `compare_count` as
+ * well, which the sweep adds to what it reconciles against.
+ *
+ * Defaults to true, so the ordinary send path says nothing about a distinction
+ * it does not have. Any future caller that generates without writing a row must
+ * pass false — and there is nothing structural to make it, which is why the
+ * invariant is written down in `architecture.md` rather than left implied.
+ */
+type SlotOptions = { persisted?: boolean }
+
+/**
  * Claims one shared-key message slot for today.
  *
  * Called before the provider request, so a refusal leaves nothing behind — no
@@ -76,7 +94,10 @@ export async function isSharedKeyAvailable(): Promise<boolean> {
  * @throws BudgetExhaustedError when the global monthly ceiling is spent (503).
  * @throws QuotaExceededError when this user's daily allowance is spent (429).
  */
-export async function reserveSharedSlot(userId: string): Promise<number> {
+export async function reserveSharedSlot(
+  userId: string,
+  { persisted = true }: SlotOptions = {},
+): Promise<number> {
   // FIRST, and the ordering is the invariant rather than a preference. Claiming
   // the slot before this check would spend a message out of someone's daily
   // allowance to buy them a 503 — charging a user for a refusal the application
@@ -90,6 +111,7 @@ export async function reserveSharedSlot(userId: string): Promise<number> {
   const { data, error } = await supabase.rpc('reserve_shared_slot', {
     p_user_id: userId,
     p_limit: SHARED_KEY_DAILY_MESSAGE_LIMIT,
+    p_persisted: persisted,
   })
 
   if (error) {
@@ -118,11 +140,24 @@ export async function reserveSharedSlot(userId: string): Promise<number> {
  * with one they cannot. The reconciliation sweep corrects a missed release
  * within ten minutes, so the cost of swallowing this is bounded and self-healing;
  * the cost of throwing is a broken error path.
+ *
+ * **`persisted` must match the reserve call that claimed the slot.** (F31) The
+ * two move together, and disagreeing leaves `compare_count` holding a slot
+ * `message_count` no longer has — which the sweep then reads as a reservation
+ * to preserve. The self-healing above does not cover that one: the sweep only
+ * ever lowers `message_count`, so an inflated `compare_count` is corrected by
+ * nothing until the row rolls over at 00:00 UTC.
  */
-export async function releaseSharedSlot(userId: string): Promise<void> {
+export async function releaseSharedSlot(
+  userId: string,
+  { persisted = true }: SlotOptions = {},
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
-  const { error } = await supabase.rpc('release_shared_slot', { p_user_id: userId })
+  const { error } = await supabase.rpc('release_shared_slot', {
+    p_user_id: userId,
+    p_persisted: persisted,
+  })
 
   if (error) {
     console.error('[server/quota] releaseSharedSlot failed', { userId, code: error.code })

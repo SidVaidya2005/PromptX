@@ -11,7 +11,11 @@ import { findModel, isSharedModel, MODEL_CATALOG } from '@/lib/models'
 
 import { serverEnv } from '@/server/env'
 import { getDecryptedKey } from '@/server/keys'
-import { reserveSharedSlot } from '@/server/quota'
+import {
+  BudgetExhaustedError,
+  QuotaExceededError,
+  reserveSharedSlot,
+} from '@/server/quota'
 
 import type { Provider } from '@/types/domain'
 
@@ -19,6 +23,19 @@ export type ResolvedModel = {
   model: LanguageModel
   usedSharedKey: boolean
 }
+
+/**
+ * Whether the generation this resolves will leave a `messages` row. (F31)
+ *
+ * Passed through to `reserveSharedSlot`, which is the only thing that reads it,
+ * and it lives on this signature rather than at the call site for the reason
+ * this whole function exists: the reservation belongs to resolution. A route
+ * that claimed its own slot to say "and this one is not persisted" would be the
+ * second entry point to the quota that `sharedTitleModel()` was built to avoid.
+ *
+ * Only `/api/compare` passes false. Everything else persists.
+ */
+export type ResolveOptions = { persisted?: boolean }
 
 /**
  * Decides which key answers a request, and whether the shared quota applies.
@@ -43,6 +60,7 @@ export async function resolveModel(
   userId: string,
   provider: Provider,
   modelId: string,
+  { persisted = true }: ResolveOptions = {},
 ): Promise<ResolvedModel> {
   if (!findModel(provider, modelId)) {
     throw new UnknownModelError(provider, modelId)
@@ -79,7 +97,7 @@ export async function resolveModel(
   // returned above, which is what keeps them out of the quota path entirely
   // rather than exempting them from it by a condition somebody has to remember —
   // and is why a tripped breaker cannot affect them.
-  await reserveSharedSlot(userId)
+  await reserveSharedSlot(userId, { persisted })
 
   return {
     model: instantiate('google', SHARED_MODEL_ID, serverEnv.SHARED_GEMINI_API_KEY),
@@ -177,4 +195,54 @@ export class UnknownModelError extends Error {
     )
     this.name = 'UnknownModelError'
   }
+}
+
+/**
+ * How each way `resolveModel()` can refuse becomes a response. (F31)
+ *
+ * Extracted when `/api/compare` became the second caller. Every one of these
+ * four refusals is a property of resolution rather than of the route that asked
+ * for it — the same missing key, spent allowance or tripped breaker means the
+ * same thing whether the answer was going to be persisted or not — so a second
+ * copy of the mapping would be two routes free to disagree about what a 429 is.
+ *
+ * **Returns data, not a `Response`.** `code-standards.md` puts response shaping
+ * in the route handler, and this module carries `server-only` and has no
+ * business constructing one. Null means "not a refusal this function knows
+ * about", which the caller logs and answers with its own 500 — the arm that
+ * must never be reached silently.
+ *
+ * The ordering below is load-bearing in one place: `BudgetExhaustedError` is
+ * 503 rather than 429 because nothing the caller does changes the answer, and it
+ * is checked before the quota arm so a refusal the application made on purpose
+ * is never reported as the personal allowance running out.
+ */
+export function modelErrorPayload(
+  error: unknown,
+): { status: number; body: { error: string; code: string } } | null {
+  if (error instanceof MissingKeyError) {
+    return {
+      status: 400,
+      body: { error: `No API key configured for ${error.provider}`, code: 'missing_key' },
+    }
+  }
+
+  if (error instanceof BudgetExhaustedError) {
+    return { status: 503, body: { error: error.message, code: 'budget_exhausted' } }
+  }
+
+  if (error instanceof QuotaExceededError) {
+    return { status: 429, body: { error: error.message, code: 'quota_exceeded' } }
+  }
+
+  if (error instanceof UnknownModelError) {
+    // The error's own message, unlike the arms above: it already distinguishes
+    // "no such model" from "PromptX ships none for this provider yet", and
+    // rebuilding that distinction here would put one rule in two files. It names
+    // a provider and a model id the client just sent, so nothing in it is not
+    // already theirs.
+    return { status: 400, body: { error: error.message, code: 'unknown_model' } }
+  }
+
+  return null
 }

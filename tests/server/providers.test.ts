@@ -199,7 +199,23 @@ describe('resolveModel — the shared key as the only fallback', () => {
 
     await resolveModel(USER_ID, 'google', SHARED_MODEL_ID)
 
-    expect(reserveSharedSlot).toHaveBeenCalledWith(USER_ID)
+    // Persisted by default, which is the half that matters. (F31) The sweep
+    // reconciles message_count against `messages`, so a send that claimed an
+    // UNpersisted slot would have its claim counted twice — once by the row it
+    // wrote and once by compare_count — and the user would be charged double
+    // ten minutes later, with nothing on screen to say so.
+    expect(reserveSharedSlot).toHaveBeenCalledWith(USER_ID, { persisted: true })
+  })
+
+  it('claims an unpersisted slot when told the generation writes no row', async () => {
+    // /api/compare's whole quota contract. Without the flag reaching this call
+    // the sweep sees a slot with no messages row behind it and refunds it
+    // within ten minutes — the daily cap silently stops applying to /compare.
+    const { resolveModel } = await loadProviders(null)
+
+    await resolveModel(USER_ID, 'google', SHARED_MODEL_ID, { persisted: false })
+
+    expect(reserveSharedSlot).toHaveBeenCalledWith(USER_ID, { persisted: false })
   })
 
   it('claims nothing when it refuses', async () => {
