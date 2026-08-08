@@ -16,6 +16,10 @@ import { textOf } from '@/lib/utils'
 
 import { getUser } from '@/server/auth'
 import {
+  linkAttachmentsToMessage,
+  listAttachmentsByIds,
+} from '@/server/data/attachments'
+import {
   createConversation,
   deleteConversation,
   getConversation,
@@ -77,6 +81,12 @@ export const runtime = 'nodejs'
  * twice. That is the failure this branch exists to prevent, and it is invisible
  * from the screen: the client's view would look exactly right until a reload.
  *
+ * Feature 28 adds no fourth shape — attachments are a modifier on a send — but
+ * it splits across the same line one more time: whether every id is ready,
+ * unlinked and the caller's is a read and belongs above it, while attaching them
+ * to the row is a write and belongs below. Refusing an unfinished upload after
+ * spending a daily message would be a refusal that costs something.
+ *
  * **The assistant row is created up front in `streaming` status**, and its id is
  * held for the life of the stream. Without it there is no stable row to update
  * on failure: at that moment the newest message is the *user's*, so any
@@ -125,6 +135,17 @@ export async function POST(request: Request) {
     // There is nothing to edit in a conversation that does not exist yet, so
     // this pairing is incoherent rather than merely unauthorised.
     if (body.editMessageId && !conversationId) {
+      return NextResponse.json(
+        { error: 'Invalid request', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
+
+    // An edit rewrites a message that already exists, and its attachments are
+    // whatever they were — there is no new row for a draft to be linked to.
+    // Changing a sent message's files is a different feature and nothing in
+    // §28–§30 asks for it, so the pairing is refused rather than half-honoured.
+    if (body.editMessageId && body.attachmentIds?.length) {
       return NextResponse.json(
         { error: 'Invalid request', code: 'invalid_input' },
         { status: 400 },
@@ -205,6 +226,64 @@ export async function POST(request: Request) {
 
     if (!target || target.conversation_id !== conversationId || target.role !== 'user') {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+  }
+
+  /**
+   * The files this turn will carry, checked here for the same reason the
+   * regenerate target is: it is a READ, and reads may live above the line. (F28)
+   *
+   * Every refusal below leaves the thread exactly as the user left it, which is
+   * the whole point of checking now — telling someone their upload had not
+   * finished *after* spending one of their twenty daily messages would be a
+   * refusal that costs something.
+   *
+   * The count is already bounded by `chatSendSchema`; what a schema cannot know
+   * is whether each id is ready, unlinked and the caller's, and only the rows
+   * answer that.
+   */
+  const attachmentIds = 'regenerate' in body ? [] : (body.attachmentIds ?? [])
+
+  if (attachmentIds.length > 0) {
+    // Duplicates would reach link_attachments_to_message as one row matching two
+    // ordinalities, which updates it once and leaves the count short — a 500 for
+    // what is really a malformed request. Refused here, where it can be named.
+    if (new Set(attachmentIds).size !== attachmentIds.length) {
+      return NextResponse.json(
+        { error: 'Invalid request', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
+
+    const rows = await listAttachmentsByIds(attachmentIds)
+
+    // A short read means an id was not the caller's — RLS filtered it out — or
+    // never existed. Indistinguishable on purpose, as everywhere else here.
+    if (rows.length !== attachmentIds.length) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    // §28: a 'pending' or 'failed' row is REPORTED, never silently dropped.
+    // Sending the message without the file the person attached to it is the one
+    // outcome that would look like the application working.
+    if (rows.some((row) => row.status !== 'ready')) {
+      return NextResponse.json(
+        {
+          error: "One of those files hasn't finished uploading.",
+          code: 'attachment_not_ready',
+        },
+        { status: 400 },
+      )
+    }
+
+    if (rows.some((row) => row.message_id !== null)) {
+      return NextResponse.json(
+        {
+          error: 'One of those files has already been sent.',
+          code: 'attachment_already_sent',
+        },
+        { status: 409 },
+      )
     }
   }
 
@@ -352,6 +431,24 @@ export async function POST(request: Request) {
         role: 'user',
         content: textOf(body.message),
       })
+
+      if (attachmentIds.length > 0) {
+        // One statement, and it repeats the ready-and-unlinked conditions the
+        // check above already made — deliberately. Between that check and this
+        // call another request could have linked the same draft to a different
+        // message, and a condition inside the write is the only kind that cannot
+        // be raced. Same shape as F16's quota claim.
+        const linked = await linkAttachmentsToMessage(promptMessageId, attachmentIds)
+
+        // Fewer rows than ids means exactly that race, and a message showing two
+        // of its four files is not a state anything downstream can repair. The
+        // throw lands in the catch below, which refunds the shared slot.
+        if (linked !== attachmentIds.length) {
+          throw new Error(
+            `linked ${linked} of ${attachmentIds.length} attachments to ${promptMessageId}`,
+          )
+        }
+      }
 
       // The model must see the turn that was just written. Loading history and
       // passing it unchanged would send everything EXCEPT the message being

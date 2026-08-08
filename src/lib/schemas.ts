@@ -9,6 +9,9 @@
 import { z } from 'zod'
 
 import {
+  ALLOWED_ATTACHMENT_MIME_TYPES,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_PROMPT_BODY_LENGTH,
   MAX_PROMPT_TAG_LENGTH,
   MAX_PROMPT_TAGS,
@@ -47,6 +50,42 @@ const systemPromptValue = z
 
 /** Mirrors the `provider` Postgres enum. */
 export const providerSchema = z.enum(['openai', 'anthropic', 'google', 'openrouter'])
+
+/**
+ * The body of `POST /api/attachments`. (F28)
+ *
+ * Everything here is a *claim* about a file that has not been uploaded yet, and
+ * that is worth being explicit about, because it decides what these checks are
+ * worth. The upload goes client-direct to Storage through a signed URL, so
+ * nothing the application does at this moment constrains what actually lands —
+ * the bucket's own `file_size_limit` and `allowed_mime_types` are what enforce
+ * that, and `/api/attachments/[id]/confirm` is what finds out afterwards.
+ *
+ * So why check at all: refusing a 40 MB PDF here means no row, no signed URL,
+ * and an immediate answer, rather than a wasted upload that Storage rejects at
+ * the last byte.
+ *
+ * `withDerivatives` is the client reporting whether it managed to produce the
+ * two webp sizes. It may be false for an image — an older browser, a decode
+ * failure — and that is a supported outcome, not an error: both columns stay
+ * null and the renderer falls back to the original. It may never be true for a
+ * PDF, which has nothing to derive from, and the refine below is what keeps a
+ * client from asking for two signed URLs it could only fill with something
+ * other than what it claimed.
+ */
+export const createAttachmentSchema = z
+  .object({
+    mimeType: z.enum(ALLOWED_ATTACHMENT_MIME_TYPES),
+    sizeBytes: z.int().positive().max(MAX_ATTACHMENT_BYTES),
+    withDerivatives: z.boolean(),
+  })
+  .strict()
+  .refine((value) => !(value.withDerivatives && value.mimeType === 'application/pdf'), {
+    message: 'A PDF has no derivatives',
+    path: ['withDerivatives'],
+  })
+
+export type CreateAttachmentInput = z.infer<typeof createAttachmentSchema>
 
 /**
  * What every `POST /api/chat` body carries, whichever kind it is.
@@ -110,6 +149,26 @@ export const chatSendSchema = chatRequestBase
      * the same thing on a conversation that has no prompt yet.
      */
     systemPrompt: systemPromptValue.optional(),
+    /**
+     * Ready drafts to attach to this turn, in the order they should render. (F28)
+     *
+     * The cap is here as well as in the route's own checks, and the two are not
+     * a duplicated rule: this one bounds what is *parsed*, so an array of ten
+     * thousand ids is refused before anything reads the database. What the route
+     * cannot delegate to a schema is whether each id is ready, unlinked and the
+     * caller's, which only the rows can answer.
+     *
+     * Order is the array's order. `link_attachments_to_message` assigns
+     * `position` from it, so this is the only place a client says how its
+     * attachments are arranged — a draft carries no position of its own,
+     * because the composer can still reorder it right up to the send.
+     *
+     * On the send branch alone. A regeneration attaches nothing (the prompt and
+     * its files already exist), and editing a message does not change its
+     * attachments — that would be a different feature, and one nothing in
+     * §28–§30 asks for.
+     */
+    attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS_PER_MESSAGE).optional(),
     message: z.object({
       id: z.string().min(1).max(64),
       role: z.literal('user'),
