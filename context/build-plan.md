@@ -579,6 +579,14 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Prompts fetched once per session and held in client state
 - Insertion is plain text into the textarea — no templating or variable substitution in v1
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **A new `GET /api/prompts`, fetched on the picker's first open.** F24's route file predicted the opposite — "a JSON read endpoint would be a second path to the same rows with nothing calling it" — and that comment is corrected in place here rather than worked around, because the condition it named no longer holds. Server-rendering the library into both chat pages was the alternative and it puts every prompt *body*, up to 10,000 characters each, into the RSC payload of every chat load for a panel most loads never open. That is the cost `listConversations()` selects four columns to avoid, with no CDN in front of the origin
+- **A module-level cache, invalidated by `usePromptMutation`.** `Chat` remounts per conversation, so component state would make "once per session" quietly mean "once per conversation". Busting the cache inside F24's existing mutation hook covers create, edit and delete in one line
+- **A new `popover.tsx` vendored from `radix-ui`, plus a hand-rolled listbox.** F24 declined a listbox for its tag field and took a native `<datalist>` — correct there, where the keyboard list was a convenience. Here it is the specification. A `DropdownMenu` cannot carry it: Radix menus own typing for their own typeahead and arrows for item navigation, so a filter input inside one fights the primitive. Non-modal, and **no exit keyframe**, per the F05 constraint
+- **The picker's search matches title *and tags*; `/prompts` still matches titles only.** Two rules rather than two spellings of one, and the difference is structural — the page has a tag filter row beside its search box and the picker has no room for one, so tags fold into the query or become unreachable. A separately named `searchPrompts()` with both behaviours pinned by tests, so the divergence stays deliberate
+- **The composer's auto-grow has to be extracted first.** The textarea resizes inside `handleChange`, which does not run for a programmatic `setText`, so an inserted multi-line prompt would land in a one-row box. Invisible until something long is inserted
+
 ### 26 Full-text search backend
 
 **Logic:**

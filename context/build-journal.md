@@ -40,6 +40,69 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 4 — Prompt library and search
 
+### 2026-08-08 — 25 Insert a prompt into the composer
+
+A library button in the composer toolbar opening an anchored popover: search
+field, keyboard-driven listbox, and insertion of the chosen body at the caret.
+
+**Decisions taken before any code, agreed with the user:**
+
+- **A new `GET /api/prompts`, read on the picker's first open.** F24 predicted this feature would reuse the `/prompts` page's server read and wrote that into the route file; the prediction was wrong and the comment is corrected in place rather than worked around. Reusing the page read would have meant shipping every prompt *body* — up to 10,000 characters each — in the RSC payload of every chat load, for a panel most loads never open.
+- **A module-level cache, invalidated inside F24's `usePromptMutation`.** `Chat` remounts per conversation, so component state would have made "once per session" mean "once per conversation".
+- **A vendored `popover.tsx`.** A `DropdownMenu` cannot hold a filter input: Radix menus own typing for their typeahead and arrows for item navigation. The popover claims neither, which leaves both to the listbox. No exit keyframe, per F05.
+- **The picker's search matches tags; `/prompts` still matches titles only.** Two rules, not two spellings — the page has a tag filter row and the picker has no room for one. Both behaviours are asserted in the same test file so the divergence is visible.
+
+**The Radix finding, which is F21's lesson in a new place.** Insertion worked
+first time — right body, right caret, popover closed — and focus was on the
+trigger button rather than the textarea. Radix returns focus to the trigger when
+a popover closes, and it does so *after* the composer's `requestAnimationFrame`
+call, so the composer's focus was set and then taken away. `onCloseAutoFocus` is
+the seam, the same one F21 used for the rename input. The yield is **conditional
+on an insertion having happened**: closing with Escape or a click outside must
+still hand focus back to the trigger, or a keyboard user who changes their mind
+is left on `<body>` with nothing to tab from. Both halves measured — insert ends
+on the textarea, Escape ends on the trigger.
+
+**`resize()` had to be extracted before any of this worked.** The textarea grew
+inside `handleChange`, which is the one path a programmatic `setText` does not
+take, so a twelve-line prompt would have landed in a one-row box. Measured after
+the fix: 40px → 112px with `scrollHeight === height`.
+
+**The cache was proven by breaking it.** With `invalidatePromptLibrary()`
+removed, a prompt created on `/prompts` and a client-side navigation back left
+the picker listing four prompts and not the fifth — the row was in the database
+and invisible to the panel, which is the staleness the invalidation exists to
+prevent. Restored, it appears at the top.
+
+**A harness lesson repeated from F24, having written it down and then done it
+again.** `getByRole('link', { name: 'New chat' })` is ambiguous in this sidebar —
+there is a "New chat" button *and* a conversation titled "New chat" — and with
+stderr suppressed the failed click read as a broken feature for several minutes.
+The navigation that works is the PromptX wordmark. Suppressing stderr on a
+command whose success is the thing being tested is now two features' worth of
+wasted time.
+
+**Mutation runs** (each turned red exactly the tests that claim it, then
+restored): dropping the tag arm from `searchPrompts` → the two tag tests, one of
+which also asserts `filterPrompts` still *does not* match tags; forcing
+`needsLeadingBreak` to false → four separator and caret tests.
+
+**Verified:** 337 tests green (25 files), typecheck, lint and a production build
+clean. In the browser: exactly **one** `GET /api/prompts` across three opens and
+a conversation switch, and a second only after a write invalidated it; filtering
+on `wri` returned two prompts whose titles contain no such string, matching their
+`writing` tag; ArrowDown moved `aria-activedescendant` and Enter inserted the
+second match; insertion at caret 6 of `before after` produced exactly one leading
+newline and no trailing one; a selection was replaced; the picker is disabled
+through a real stream (ten consecutive samples showing the stop button and the
+disabled trigger) and enabled after; the empty library shows its state and a link
+to `/prompts`. Five test rows were deleted from the live project afterwards.
+
+**Open after this feature:**
+
+- **The highlight follows the pointer on open.** If the cursor happens to rest over an option as the panel appears, that option is highlighted and Enter inserts it rather than the top match. Conventional combobox behaviour and not wrong, but a keyboard user who opened by mouse could be surprised. The usual fix is to ignore hover until the mouse actually moves; not built, because it is a papercut rather than a defect.
+- **A prompt written in another browser tab is invisible until reload.** Deliberate: the alternative is a poll or a subscription for a panel opened rarely.
+
 ### 2026-08-08 — 24 Prompt library
 
 The `prompts` table has existed since F02 and nothing had ever written to it.
