@@ -3,7 +3,6 @@
 import { useState } from 'react'
 
 import { SITE_URL } from '@/lib/constants'
-import { createBrowserSupabaseClient } from '@/lib/supabase-browser'
 
 import { Button } from '@/components/ui/button'
 
@@ -17,6 +16,15 @@ type GoogleSignInButtonProps = {
  *
  * There is no Google "G" mark: the official one is four brand colours, and
  * DESIGN.md admits no chromatic accent. The off-white primary carries it.
+ *
+ * **The Supabase browser client is imported inside the handler, not at module
+ * scope**, and that is a measurement rather than a preference. `/` shipped
+ * 222.9 KB of first-load JS against a 200 KB budget, and `supabase-js` was the
+ * largest thing on a page whose only interactive element is this button.
+ * Deferring it to the click costs nothing a visitor can perceive — the very next
+ * thing that happens is a full-page redirect to Google — while taking the weight
+ * off the page a cold Render instance serves first, which `architecture.md`
+ * makes a design constraint rather than a nicety.
  */
 export function GoogleSignInButton({ next = '/chat' }: GoogleSignInButtonProps) {
   const [isPending, setIsPending] = useState(false)
@@ -26,6 +34,8 @@ export function GoogleSignInButton({ next = '/chat' }: GoogleSignInButtonProps) 
     setIsPending(true)
     setError(null)
 
+    // Loaded here so it stays out of the initial bundle. See the note above.
+    const { createBrowserSupabaseClient } = await import('@/lib/supabase-browser')
     const supabase = createBrowserSupabaseClient()
 
     const { error: signInError } = await supabase.auth.signInWithOAuth({
