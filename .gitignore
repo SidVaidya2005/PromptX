@@ -43,3 +43,9 @@ next-env.d.ts
 # browser debugging skill every time a UI feature is verified. Not the e2e
 # suite, which arrives at feature 36 and lives in e2e/.
 .playwright-cli/
+
+# playwright
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
