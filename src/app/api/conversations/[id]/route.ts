@@ -11,6 +11,8 @@ import {
   renameConversation,
   setConversationArchived,
   setConversationPinned,
+  shareConversation,
+  unshareConversation,
   updateConversationModel,
   updateSystemPrompt,
 } from '@/server/data/conversations'
@@ -204,6 +206,43 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       console.error('[api/conversations] system prompt change failed', error)
       return NextResponse.json(
         { error: 'Could not save the system prompt', code: 'internal_error' },
+        { status: 500 },
+      )
+    }
+  }
+
+  if ('shared' in body) {
+    const { shared } = body
+
+    try {
+      if (!shared) {
+        const revoked = await unshareConversation(parsedId.data)
+
+        if (!revoked) {
+          return NextResponse.json({ error: 'Not found' }, { status: 404 })
+        }
+
+        // Null rather than omitted, so the client can tell "revoked" from "this
+        // response forgot to mention the slug" — the same null-versus-absent
+        // distinction the system prompt branch above turns on.
+        return NextResponse.json({ shared: false, shareSlug: null })
+      }
+
+      const slug = await shareConversation(parsedId.data)
+
+      if (!slug) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      // The slug rather than the full URL. `SITE_URL` is a public constant the
+      // client already has, and returning a built URL would put the same rule in
+      // two places — with the server's copy silently winning on a deployment
+      // where they disagreed.
+      return NextResponse.json({ shared: true, shareSlug: slug })
+    } catch (error) {
+      console.error('[api/conversations] share change failed', error)
+      return NextResponse.json(
+        { error: 'Could not change the share link', code: 'internal_error' },
         { status: 500 },
       )
     }

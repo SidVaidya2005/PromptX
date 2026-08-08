@@ -424,6 +424,26 @@ export const conversationSystemPromptSchema = z
   .strict()
 
 /**
+ * Publishing a conversation to a public link, or revoking it. (F33)
+ *
+ * Desired state rather than a toggle, for the reason the pin and the archive
+ * record — and here the consequence is sharper than a row moving groups. A
+ * toggle that arrived twice would revoke a link the owner had just published, or
+ * republish one they had just revoked *under a new slug*, and either way the URL
+ * in their clipboard would no longer mean what they think it means.
+ *
+ * There is no `slug` field, and there never should be. The slug is minted
+ * server-side from a cryptographic source; letting a client propose one would
+ * let it choose a guessable link, which is the only thing standing between a
+ * conversation and anyone who tries.
+ */
+export const conversationShareSchema = z
+  .object({
+    shared: z.boolean(),
+  })
+  .strict()
+
+/**
  * The body of `PATCH /api/conversations/[id]` — one intent at a time.
  *
  * **Every branch is `.strict()`, for the reason `chatRequestSchema` records.**
@@ -442,6 +462,7 @@ export const updateConversationSchema = z.union([
   conversationPinSchema,
   conversationArchiveSchema,
   conversationSystemPromptSchema,
+  conversationShareSchema,
 ])
 
 export type UpdateConversationInput = z.infer<typeof updateConversationSchema>
