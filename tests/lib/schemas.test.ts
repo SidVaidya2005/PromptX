@@ -12,6 +12,7 @@ import {
   createAttachmentSchema,
   chatRequestSchema,
   chatSendSchema,
+  compareRequestSchema,
   createPromptSchema,
   updateConversationSchema,
 } from '@/lib/schemas'
@@ -541,5 +542,51 @@ describe('createAttachmentSchema', () => {
     })
 
     expect(parsed.success).toBe(false)
+  })
+})
+
+describe('compareRequestSchema', () => {
+  const base = {
+    prompt: 'which of you is better at SQL',
+    provider: 'google' as const,
+    modelId: 'gemini-3.6-flash',
+  }
+
+  it('accepts one prompt against one model', () => {
+    expect(compareRequestSchema.safeParse(base).success).toBe(true)
+  })
+
+  it('refuses a prompt that is only whitespace', () => {
+    // `.trim()` is declared before `.min(1)` for the reason F21 measured on this
+    // zod version: checks run in declaration order, so the bound sees the
+    // trimmed value and '   ' fails rather than reaching a provider as ''.
+    expect(compareRequestSchema.safeParse({ ...base, prompt: '   ' }).success).toBe(false)
+  })
+
+  it('trims the prompt it hands on', () => {
+    const parsed = compareRequestSchema.safeParse({ ...base, prompt: '  hello  ' })
+
+    expect(parsed.success && parsed.data.prompt).toBe('hello')
+  })
+
+  it('refuses the left/right shape §31 first described', () => {
+    // `.strict()`, and it is load-bearing rather than tidiness: an ordinary zod
+    // object strips undeclared keys, so a body written against the old
+    // multiplexed design would be accepted with its second model silently
+    // dropped — one column's worth of answer, billed and returned as though
+    // both had been asked.
+    const parsed = compareRequestSchema.safeParse({
+      prompt: 'hello',
+      left: { provider: 'google', modelId: 'gemini-3.6-flash' },
+      right: { provider: 'openrouter', modelId: 'anthropic/claude-opus-5' },
+    })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('refuses a message object, which belongs to the chat route', () => {
+    expect(compareRequestSchema.safeParse({ ...base, message: base.prompt }).success).toBe(
+      false,
+    )
   })
 })

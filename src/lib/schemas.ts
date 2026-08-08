@@ -255,6 +255,36 @@ export type ChatRequest = z.infer<typeof chatRequestSchema>
 export type ChatRequestMessage = z.infer<typeof chatSendSchema>['message']
 
 /**
+ * The body of `POST /api/compare`. (F31)
+ *
+ * **One model, not two.** §31 described "two `streamText` calls multiplexed into
+ * one response", and each column posts its own request instead — one HTTP
+ * response carries one `request.signal`, so a per-column stop could only stop
+ * *rendering* while the provider kept generating and billing, and a per-column
+ * refusal could not be an HTTP status. So there is no `left`/`right` here: the
+ * side is a client concept the server never learns.
+ *
+ * A bare `prompt` string rather than `chatSendSchema`'s `message` object, and
+ * the difference is the point. That shape exists because the AI SDK's
+ * `prepareSendMessagesRequest` produces it and because the id it carries has to
+ * be re-keyed to the row the message became. Nothing here becomes a row, so
+ * there is no id to reconcile and nothing for the shape to buy.
+ *
+ * The cap matches `chatSendSchema`'s text part exactly. A comparison is the same
+ * prompt someone would have sent to the composer, and a bound that differed
+ * would make one surface refuse what the other accepts.
+ */
+export const compareRequestSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(100_000),
+    provider: providerSchema,
+    modelId: z.string().min(1).max(120),
+  })
+  .strict()
+
+export type CompareRequest = z.infer<typeof compareRequestSchema>
+
+/**
  * The body of `POST /api/title`.
  *
  * Not nullable, unlike the chat route's: titling names a conversation that
