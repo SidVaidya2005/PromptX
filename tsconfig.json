@@ -35,5 +35,10 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  // supabase/functions is Deno, not Node: it resolves `jsr:` specifiers and
+  // uses the `Deno` global, neither of which this compiler knows about. It is
+  // deployed by the Supabase MCP rather than built here, so excluding it costs
+  // no coverage — and leaving it in makes `pnpm typecheck` fail on code that is
+  // correct for the runtime it actually runs in. (F28)
+  "exclude": ["node_modules", "supabase/functions"]
 }
