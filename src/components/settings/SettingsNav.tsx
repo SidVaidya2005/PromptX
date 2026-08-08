@@ -37,8 +37,6 @@ export function SettingsNav({ items }: SettingsNavProps) {
                 className={cn(
                   'inline-flex items-center border-b-2 px-md py-sm text-body-sm-strong',
                   'transition-colors',
-                  'focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-2',
-                  'focus-visible:ring-offset-canvas focus-visible:outline-none',
                   'pointer-coarse:min-h-11',
                   isActive
                     ? 'border-primary text-ink'

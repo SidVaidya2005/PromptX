@@ -138,7 +138,6 @@ export function SystemPromptControl({
             className={cn(
               'w-full resize-y rounded-sm border border-hairline bg-canvas-soft px-md py-sm',
               'text-body-sm text-ink placeholder:text-mute',
-              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
             )}
           />
         </label>

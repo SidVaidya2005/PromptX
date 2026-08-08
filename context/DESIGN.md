@@ -17,7 +17,7 @@ colors:
   # application needs destructive confirmations, quota warnings, and success
   # feedback. Warm-tinted so they sit inside the palette. Reserved exclusively
   # for communicating state; never for emphasis, CTAs, or decoration.
-  danger: "#d8735e"
+  danger: "#e08a76"
   warn: "#d6a962"
   success: "#8fae7e"
 
@@ -432,7 +432,7 @@ Three colors exist beyond the inherited brand, because an application needs to
 communicate destructive intent, quota pressure, and success. They are warm-tinted
 to sit inside the palette rather than fight it.
 
-- **Danger** (`{colors.danger}` — `#d8735e`): Destructive confirmations, message error states, exhausted quota.
+- **Danger** (`{colors.danger}` — `#e08a76`): Destructive confirmations, message error states, exhausted quota. **Lightened from `#d8735e` at F37**, which cleared AA on `canvas` at 4.66:1 but failed on `canvas-soft` at 3.88:1 — and `canvas-soft` is the surface it is most often drawn on, since the alert dialog, the dropdown's destructive item and every in-dialog error message sit on it. Axe did not catch it because none of those states is open during a route sweep; it was found by computing every token against every surface it can appear on.
 - **Warn** (`{colors.warn}` — `#d6a962`): Approaching the shared-key daily limit.
 - **Success** (`{colors.success}` — `#8fae7e`): Key validated, conversation shared, export complete.
 

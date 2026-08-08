@@ -47,7 +47,7 @@
 
   /* State-only extensions. Reserved for destructive confirmations, quota
      pressure, and success feedback — never for emphasis, a CTA, or decoration. */
-  --color-danger: #d8735e;
+  --color-danger: #e08a76;
   --color-warn: #d6a962;
   --color-success: #8fae7e;
 
