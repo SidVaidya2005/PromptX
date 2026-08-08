@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-import { LibraryIcon } from 'lucide-react'
+import { LibraryIcon, SearchIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -25,7 +25,10 @@ import { cn } from '@/lib/utils'
  * `aria-label`, never `aria-labelledby`.
  */
 
-const LINKS = [{ href: '/prompts', label: 'Prompts', icon: LibraryIcon }] as const
+const LINKS = [
+  { href: '/prompts', label: 'Prompts', icon: LibraryIcon },
+  { href: '/search', label: 'Search', icon: SearchIcon },
+] as const
 
 export function SidebarNav() {
   const pathname = usePathname()

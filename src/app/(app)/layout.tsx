@@ -17,6 +17,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { AppShell } from '@/components/shell/AppShell'
 import { OutlineRail } from '@/components/shell/OutlineRail'
 import { Sidebar } from '@/components/shell/Sidebar'
+import { SearchShortcut } from '@/components/search/SearchShortcut'
 
 import type { ShellUser } from '@/types/domain'
 
@@ -72,6 +73,10 @@ export default async function AppLayout({
     // Belongs here rather than in the root layout: the landing page renders no
     // tooltips, and a provider there would ship to every signed-out visitor.
     <TooltipProvider>
+      {/* Renders nothing; it exists here because this layout is the one
+          component every authenticated route is inside. (F27) */}
+      <SearchShortcut />
+
       <AppShell
         sidebar={
           <Sidebar
