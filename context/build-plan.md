@@ -815,7 +815,17 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 
 - Markdown: title as an H1, then role-labelled sections with the model noted per assistant message, code fences preserved
 - JSON: the full conversation with messages, models, and timestamps; no user id and no key material
-- Generated server-side in a route handler, streamed as a download
+- Generated server-side in a route handler, returned as a download
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **"Streamed as a download" is corrected to "returned as a download", and the correction is the honest half of the feature.** This section said streamed until F34. It cannot mean that here: `listByConversation` does `select('*')` and materialises the whole thread before the route can write a byte, so a `ReadableStream` over an array already in memory would satisfy the word and none of the intent — the failure `constraints.md` keeps recording, a mechanism that looks like it is doing work and is not. Real streaming needs a paginated read, a new data function and its own ordering guarantees; it is recorded as a follow-up rather than smuggled in here
+- **`GET` with an anchor, not `POST` with a blob.** A download is a navigation: an anchor carrying `download` needs no client JavaScript, no `URL.createObjectURL` and no cleanup, and the menu item is `asChild` over an `<a>` exactly as `ModelPicker` already does for its "Add a key" link. The URL is guessable and useless without the session, and RLS makes another user's id a 404
+- **Attachments are noted in both formats, with no bytes.** §34 does not mention them, and an export that silently drops them misrepresents the conversation — the argument F33's placeholders rest on. `listAttachmentsByMessageIds` already returns metadata and does no signing, so nothing new is needed and no object can leak
+- **The JSON excludes more than §34 names, and the exclusions are the point.** No `user_id` anywhere, as specified. Also **no `share_slug`**: not key material, but exporting it would put a live public URL into a file people email around, and revoking it later cannot reach that copy. Also no `input_tokens`, `output_tokens` or `used_shared_key` — the section names messages, models and timestamps, and the smallest disclosure that satisfies it is the right default. A test asserts the serialised payload carries none of them
+- **The filename is sanitised as a header-injection guard, not for tidiness.** The title is user-controlled and reaches a response header, where a CR or LF could split it. Control characters and quotes are stripped, the result is capped, empty falls back to `conversation`, and the header carries both an ASCII `filename=` and a `filename*=UTF-8''…`
+- **The pure work lives in `src/lib/export.ts`**, the split `share.ts` and `compare.ts` already make: `vitest.config.ts` runs `tests/**` in a node environment, so a builder living inside a route is a builder no test in this project can reach
+- **A `streaming` message is exported as-is**, unlike the share view which hides it. Publishing a half-sentence to strangers and handing someone their own record are different things
 
 ---
 

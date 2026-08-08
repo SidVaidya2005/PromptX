@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
@@ -31,9 +32,9 @@ type ThreadHeaderProps = {
  * conversation to share. This one belongs to the thread, appears at every width,
  * and only on `/chat/[id]`.
  *
- * The overflow menu is deliberately a menu with one item today. §34 puts export
- * in it, which is the reason it is a menu rather than a bare share button — a
- * control that has to become a menu one feature later is worth being one now.
+ * The overflow menu was built as a menu while it held one item, on the argument
+ * that §34 would put export in it and a control that has to become a menu one
+ * feature later is worth being one now. F34 arrived and it did.
  *
  * The slug is state here rather than in the dialog, seeded from the row. The
  * dialog unmounts on close (F24's rule), so a slug living there would be
@@ -74,6 +75,34 @@ export function ThreadHeader({
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => setIsDialogOpen(true)}>
             {shareSlug ? 'Manage share link' : 'Share…'}
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+
+          {/**
+           * Anchors, not buttons, and that is the whole client side of F34.
+           *
+           * A download is a navigation: `download` on a same-origin link hands
+           * the response to the browser, which reads the filename off
+           * `Content-Disposition`. No fetch, no blob, no `URL.createObjectURL`
+           * and nothing to revoke — the failure mode of the blob version is a
+           * leaked object URL per export, which nothing on screen would show.
+           *
+           * `asChild` for the reason `ModelPicker`'s "Add a key" row records:
+           * `ITEM_BASE` carries `data-disabled:pointer-events-none`, and a menu
+           * item that *is* the link keeps the keyboard behaviour a Radix item
+           * already has.
+           */}
+          <DropdownMenuItem asChild>
+            <a href={`/api/conversations/${conversationId}/export?format=markdown`} download>
+              Export as Markdown
+            </a>
+          </DropdownMenuItem>
+
+          <DropdownMenuItem asChild>
+            <a href={`/api/conversations/${conversationId}/export?format=json`} download>
+              Export as JSON
+            </a>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
