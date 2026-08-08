@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 
 import type { CreatePromptInput } from '@/lib/schemas'
 
+import { invalidatePromptLibrary } from '@/components/prompts/use-prompt-library'
+
 import type { Prompt } from '@/types/domain'
 
 type ApiError = { error: string; code?: string }
@@ -63,6 +65,11 @@ export function usePromptMutation() {
 
       const prompt = (await response.json()) as Prompt
 
+      // The composer's picker caches the library for the page session, so its
+      // copy is now stale by exactly this row. Dropped here rather than in each
+      // caller because this hook wraps every write there is. (F25)
+      invalidatePromptLibrary()
+
       router.refresh()
       return prompt
     } catch {
@@ -86,6 +93,8 @@ export function usePromptMutation() {
         setError(payload.error)
         return false
       }
+
+      invalidatePromptLibrary()
 
       router.refresh()
       return true
