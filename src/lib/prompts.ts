@@ -90,6 +90,37 @@ export function filterPrompts(
 }
 
 /**
+ * The prompts matching what someone typed into the composer's picker. (F25)
+ *
+ * **A different rule from `filterPrompts()` above, on purpose, and the reason is
+ * structural rather than a matter of taste.** `/prompts` has a row of tag chips
+ * beside its search box, so its query only ever has to match titles — the tags
+ * have their own control. The picker is a panel anchored to a toolbar button
+ * with no room for that row, so a tag either folds into the query here or
+ * becomes unreachable from the composer entirely.
+ *
+ * That makes these two rules rather than two spellings of one, which is the
+ * distinction F15 draws: a rule with one definition and two callers is not the
+ * same thing as one rule written twice. Both behaviours are pinned by tests, so
+ * the divergence stays deliberate — if they are ever meant to converge, that is
+ * a decision someone makes rather than a drift nobody notices.
+ *
+ * The body is still not matched, for the reason `filterPrompts()` records: a
+ * common word appears in most bodies, so the list would stop narrowing exactly
+ * when someone is typing to narrow it.
+ */
+export function searchPrompts(prompts: readonly Prompt[], query: string): Prompt[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return [...prompts]
+
+  return prompts.filter(
+    (prompt) =>
+      prompt.title.toLowerCase().includes(needle) ||
+      prompt.tags.some((tag) => tag.includes(needle)),
+  )
+}
+
+/**
  * A starting title for a prompt being saved out of the system-prompt dialog. (F24)
  *
  * The **first line**, not the first N characters: a standing instruction is
@@ -107,6 +138,55 @@ export function titleFromBody(body: string): string {
   const candidate = firstLine.trim() === '' ? body : firstLine
 
   return candidate.replace(/\s+/g, ' ').trim().slice(0, MAX_PROMPT_TITLE_LENGTH)
+}
+
+/** What the composer's draft becomes when a prompt is inserted into it. (F25) */
+export type PromptInsertion = {
+  text: string
+  /** Where the caret goes afterwards: the end of what was just inserted. */
+  caret: number
+}
+
+/**
+ * Puts a prompt's body into a draft at the caret. (F25)
+ *
+ * Pure, and separated from the textarea for the reason F05 established: vitest
+ * runs in a node environment against `tests/`, so this is the only part of the
+ * insertion that can be tested at all before F36. What is left in the component
+ * is reading `selectionStart`/`selectionEnd` and writing the result back.
+ *
+ * **A selection is replaced**, which is what every editor does and what makes
+ * "insert at the cursor" well defined when the cursor is a range rather than a
+ * point.
+ *
+ * **Newlines are added only where they are needed.** A prompt dropped straight
+ * against existing words would run into them — `explain thisReview this diff` —
+ * so a separator goes in when the neighbouring character is not already
+ * whitespace, on each side independently. Inserting into an empty draft, or on
+ * its own blank line, therefore adds nothing at all, which is the common case.
+ *
+ * The caret lands after the inserted body rather than after any trailing
+ * separator, so typing continues where the reader is looking.
+ */
+export function insertPromptAt(
+  draft: string,
+  selectionStart: number,
+  selectionEnd: number,
+  body: string,
+): PromptInsertion {
+  const before = draft.slice(0, selectionStart)
+  const after = draft.slice(selectionEnd)
+
+  const needsLeadingBreak = before !== '' && !/\s$/.test(before)
+  const needsTrailingBreak = after !== '' && !/^\s/.test(after)
+
+  const lead = needsLeadingBreak ? '\n' : ''
+  const trail = needsTrailingBreak ? '\n' : ''
+
+  return {
+    text: `${before}${lead}${body}${trail}${after}`,
+    caret: before.length + lead.length + body.length,
+  }
 }
 
 /**
