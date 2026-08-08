@@ -17,10 +17,10 @@ progress, and what is next.
 
 ## Current Status
 
-**Phase:** Phase 6 — Compare, share, export: all four features built, checkpoint outstanding
-**Last completed:** 34 Export — two anchor items in F33's overflow menu, each pointing at `GET /api/conversations/[id]/export?format=…`, so a download is a navigation with no blob and nothing to revoke. Markdown is the title as its only H1 with `## You` / `## Assistant — <model>` and content inserted **verbatim**, which is what "code fences preserved" means. JSON picks every field by name — that is the security property, not a style: a spread would export `user_id`, the token counts and **`share_slug`**, a live public URL travelling inside a file people forward that revoking cannot reach. Proven by mutation: adding `...message` turned the exclusions test red on the user id. Attachments are named in both formats and never embedded. **§34's "streamed as a download" was corrected rather than implemented** — `listByConversation` does `select('*')`, so a `ReadableStream` over an array already in memory would satisfy the word and give none of the benefit; paginated streaming is recorded as a follow-up. The header-injection guard was proven end to end by renaming a conversation to `evil"\r\nX-Injected: yes`, exporting, and finding the filename sanitised and no such header. **One harness gotcha cost real time:** `pkill -f "next start"` kills the pnpm wrapper and not the `next-server` child, so a pre-F34 build kept port 3100 and the route "404ed" until the shape of the 404 — `x-nextjs-prerender: 1`, `text/html` — gave it away. 438 tests, typecheck, lint and a production build green
-**Previously completed:** 31–33 — the compare view, promoting a comparison, and public share links
-**Next:** Phase 6 checkpoint — run the verification commands, read the F31–F34 diff for consistency, update this file, compact `build-journal.md` by promoting Phase 6's still-binding rules into `constraints.md`, and record the follow-ups. Then Phase 7 opens with 35 Unit test suite
+**Phase:** Phase 6 closed — Phase 7 (Hardening and release) is next
+**Last completed:** Phase 6 checkpoint — 438 tests, typecheck, lint and a production build green; advisors show only the two documented pre-existing notices and nothing new from this phase. The phase diff is 49 files and ~3,900 insertions across F31–F34, read for consistency: all three new routes authenticate before parsing and carry an `internal_error` catch, no `.eq('user_id')` stands in for RLS, the new server module carries `server-only`, no raw hex or named width utility reached a component, nothing is hover-only, and no TODO or `console.log` survived. The share boundary was re-checked in code rather than trusted: only `data/shared.ts` constructs the anon client, and the share page imports nothing that signs a URL. **One real defect found and fixed:** a compare column's model picker stays enabled once the column settles, so it describes the *next* run — but the answer stayed beneath it and F32's promote read the picker, so switching a model after a run persisted an answer under a model that never wrote it. Reproduced end to end (a Gemini reply stored as `openrouter / anthropic/claude-sonnet-5`, which `architecture.md` forbids and F33 would publish), fixed by capturing the model at send so it travels with the answer and labels it on screen, then reproduced again to confirm. One Phase 5 item closed by construction: `/compare` needs no capability gate because it has no attachment surface. Phase 6's rules were promoted into `constraints.md` under a new **Sharing and export** topic plus additions to Quota, Chat and streaming, Testing and Tooling; `build-journal.md` collapsed from 258 lines to 216. Seven follow-ups recorded, none blocking
+**Previously completed:** 31–34 — the compare view, promoting a comparison, public share links, and export
+**Next:** Phase 7 — Hardening and release, opening with 35 Unit test suite: coverage completed across `src/server/`, the RLS isolation suite extended to every table added since Phase 0, and provider calls mocked at the `resolveModel()` boundary so no test spends money
 
 ---
 
@@ -86,7 +86,7 @@ progress, and what is next.
 - [x] 32 Promote a comparison
 - [x] 33 Public share links
 - [x] 34 Export
-- [ ] Phase checkpoint — verify Phase 6 — Compare, share, export is stable before starting the next phase
+- [x] Phase checkpoint — verify Phase 6 — Compare, share, export is stable before starting the next phase
 
 ### Phase 7 — Hardening and release
 
