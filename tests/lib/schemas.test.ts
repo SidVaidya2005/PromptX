@@ -9,6 +9,7 @@ import {
   MAX_TITLE_LENGTH,
 } from '@/lib/constants'
 import {
+  createAttachmentSchema,
   chatRequestSchema,
   chatSendSchema,
   createPromptSchema,
@@ -484,5 +485,61 @@ describe('createPromptSchema', () => {
     expect(
       createPromptSchema.safeParse({ ...base, id: crypto.randomUUID() }).success,
     ).toBe(false)
+  })
+})
+
+/**
+ * The one place a client is trusted to describe its own upload. (F29)
+ *
+ * Everything else on an attachment is measured at confirm — `size_bytes` and
+ * `mime_type` are overwritten with what actually landed. These two are not, so
+ * the bound is what stops a nonsense figure being stored, and the reason they
+ * are allowed through at all is that they are cosmetic: a wrong value costs a
+ * layout wobble, not a security claim.
+ */
+describe('createAttachmentSchema', () => {
+  const base = { mimeType: 'image/png' as const, sizeBytes: 1000, withDerivatives: true }
+
+  it('accepts the inline dimensions a derivative can actually have', () => {
+    const parsed = createAttachmentSchema.safeParse({
+      ...base,
+      inlineWidth: 1440,
+      inlineHeight: 810,
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('refuses a width beyond the derivative cap', () => {
+    // The inline copy is capped at ATTACHMENT_INLINE_MAX_PX by the code that
+    // makes it, so anything larger did not come from that code.
+    const parsed = createAttachmentSchema.safeParse({ ...base, inlineWidth: 4000 })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('refuses a zero or negative dimension', () => {
+    expect(createAttachmentSchema.safeParse({ ...base, inlineWidth: 0 }).success).toBe(false)
+    expect(createAttachmentSchema.safeParse({ ...base, inlineHeight: -1 }).success).toBe(false)
+  })
+
+  it('allows them to be absent, which is what a PDF sends', () => {
+    const parsed = createAttachmentSchema.safeParse({
+      mimeType: 'application/pdf',
+      sizeBytes: 1000,
+      withDerivatives: false,
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('refuses a PDF that claims derivatives', () => {
+    const parsed = createAttachmentSchema.safeParse({
+      mimeType: 'application/pdf',
+      sizeBytes: 1000,
+      withDerivatives: true,
+    })
+
+    expect(parsed.success).toBe(false)
   })
 })

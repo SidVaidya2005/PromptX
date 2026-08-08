@@ -18,7 +18,9 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          inline_height: number | null
           inline_path: string | null
+          inline_width: number | null
           message_id: string | null
           mime_type: string
           position: number
@@ -31,7 +33,9 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          inline_height?: number | null
           inline_path?: string | null
+          inline_width?: number | null
           message_id?: string | null
           mime_type: string
           position?: number
@@ -44,7 +48,9 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          inline_height?: number | null
           inline_path?: string | null
+          inline_width?: number | null
           message_id?: string | null
           mime_type?: string
           position?: number

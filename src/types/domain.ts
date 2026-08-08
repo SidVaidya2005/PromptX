@@ -97,6 +97,29 @@ export type AttachmentDraft = {
 }
 
 /**
+ * An attachment as the browser needs it: the row's facts plus signed URLs. (F29)
+ *
+ * The bucket is private, so every one of these is generated server-side and
+ * lives for `ATTACHMENT_READ_URL_TTL_SECONDS`. `thumb` and `inline` are null for
+ * a PDF and for an image whose browser could not derive anything — a null means
+ * "use `original`", never "this attachment is broken".
+ *
+ * `width` and `height` describe the *inline* copy and are the one client-
+ * reported thing on the row. They exist so `next/image` can carry explicit
+ * dimensions; nothing else may depend on them.
+ */
+export type RenderedAttachment = {
+  id: string
+  mimeType: string
+  position: number
+  thumbUrl: string | null
+  inlineUrl: string | null
+  originalUrl: string
+  width: number | null
+  height: number | null
+}
+
+/**
  * The columns the sidebar actually renders.
  *
  * Deliberately narrower than the row. No CDN sits in front of the origin, so

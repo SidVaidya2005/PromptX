@@ -10,6 +10,7 @@ import { z } from 'zod'
 
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
+  ATTACHMENT_INLINE_MAX_PX,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_PROMPT_BODY_LENGTH,
@@ -78,6 +79,23 @@ export const createAttachmentSchema = z
     mimeType: z.enum(ALLOWED_ATTACHMENT_MIME_TYPES),
     sizeBytes: z.int().positive().max(MAX_ATTACHMENT_BYTES),
     withDerivatives: z.boolean(),
+    /**
+     * The inline derivative's pixel size, so `next/image` can carry explicit
+     * dimensions and a thread of images does not reflow as it loads. (F29)
+     *
+     * **The one thing a client is trusted to report about its own upload**, and
+     * the exemption is deliberate rather than an oversight: the browser decoded
+     * the image to produce the derivative, and the server would have to decode
+     * it again on the request path to check — the exact work the whole pipeline
+     * exists to avoid. It is safe because these are cosmetic. A wrong value
+     * costs a layout wobble; a wrong `sizeBytes` or `mimeType` would be a
+     * security claim, which is why those two are measured at confirm instead.
+     *
+     * Bounded by the derivative's own cap anyway, so a nonsense figure is
+     * refused rather than stored.
+     */
+    inlineWidth: z.int().positive().max(ATTACHMENT_INLINE_MAX_PX).optional(),
+    inlineHeight: z.int().positive().max(ATTACHMENT_INLINE_MAX_PX).optional(),
   })
   .strict()
   .refine((value) => !(value.withDerivatives && value.mimeType === 'application/pdf'), {
