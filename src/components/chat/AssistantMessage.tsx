@@ -68,18 +68,23 @@ export function AssistantMessage({
     <div
       id={outlineAnchorId(id)}
       className={cn(
-        'group flex scroll-mt-lg flex-col',
+        'group relative flex scroll-mt-lg flex-col',
         // A left indicator rather than the border UserMessage uses. DESIGN.md
         // `message-assistant` is explicit that a response carries no fill and
         // no border — "responses are the content, not a card" — so bordering it
         // would contradict the system. The 2px primary rule is the same marker
         // `outline-rail-item` already uses for "this is the one you mean".
         //
-        // The transparent border is always present so highlighting cannot
-        // reflow the thread: without it the text would jump sideways for 1.2
-        // seconds and settle back.
-        'border-l-2 border-transparent pl-lg transition-colors',
-        isHighlighted && 'border-primary',
+        // Drawn as a pseudo-element in the column's own gutter, which is the
+        // half that had to be corrected: the first version used a real
+        // `border-l-2` plus `pl-lg`, and that indented every response by 18px —
+        // measured at the Phase 4 checkpoint, assistant text starting at 334
+        // where the column starts at 316, against a DESIGN.md line that says a
+        // response is "full width of the message column". A pseudo-element
+        // occupies no layout at all, so nothing moves whether it is shown or
+        // not, and there is no transparent placeholder to remember.
+        isHighlighted &&
+          'before:absolute before:inset-y-0 before:-left-md before:border-l-2 before:border-primary',
       )}
     >
       <div

@@ -37,15 +37,54 @@ export function SearchInput({ query }: SearchInputProps) {
   const router = useRouter()
 
   const [draft, setDraft] = useState(query)
-  const [syncedQuery, setSyncedQuery] = useState(query)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // The URL changed underneath us — a shared link, or the back button. Adjusted
-  // during render, React's documented alternative to an effect, so the field
-  // never paints one frame holding the previous query.
-  if (query !== syncedQuery) {
-    setSyncedQuery(query)
-    setDraft(query)
+  /**
+   * How many navigations this component has started and not yet seen land.
+   *
+   * **A count rather than a comparison, and the reason is that navigations land
+   * out of order.** Two earlier designs compared the incoming `query` against
+   * the value the debounce last sent, and both were measured failing:
+   *
+   * - Recording that value in *state* re-rendered before the navigation landed,
+   *   so the comparison ran against a `query` prop that had not moved yet, read
+   *   as an external change, and cleared the field. The typed word visibly
+   *   vanished for about a second.
+   * - Keying on the prop's own change fixed that, and still lost text whenever a
+   *   navigation arrived after a later one had been recorded — type `deploy`,
+   *   keep typing to `deployment`, and the slower `deploy` render lands holding
+   *   a query that no longer matches anything remembered, so it looks external
+   *   and overwrites four characters the user can see themselves having typed.
+   *
+   * Counting sidesteps the ordering entirely: every landing this component
+   * caused consumes one outstanding navigation, whatever it happens to carry. A
+   * change arriving while the count is zero is the only kind nobody here asked
+   * for — a shared link, or the back button — and only that kind may touch the
+   * draft.
+   *
+   * State rather than a ref, because a ref may be neither written nor read
+   * during render; `react-hooks/refs` enforces that, correctly, since a ref
+   * touched there misbehaves under a double invocation.
+   */
+  const [pendingNavigations, setPendingNavigations] = useState(0)
+  const [previousQuery, setPreviousQuery] = useState(query)
+
+  // Adjusting state when a prop changes, the pattern `AppShell` already uses for
+  // an orphaned sheet: once per change of the prop, during render, so the field
+  // never paints a stale frame.
+  if (query !== previousQuery) {
+    setPreviousQuery(query)
+
+    if (pendingNavigations > 0) {
+      // Ours. The draft is already at least this far ahead, and possibly
+      // several keystrokes further.
+      setPendingNavigations((pending) => pending - 1)
+    } else {
+      // Nobody here asked for this, so the URL is the authority: a shared link,
+      // or a back navigation — including one back to a query this session
+      // already sent, which a value comparison could not have recognised.
+      setDraft(query)
+    }
   }
 
   useEffect(
@@ -63,11 +102,17 @@ export function SearchInput({ query }: SearchInputProps) {
     timer.current = setTimeout(() => {
       timer.current = null
 
-      // Kept in step so the render-time sync above does not immediately undo
-      // what this navigation is about to deliver.
-      setSyncedQuery(next)
-
       const trimmed = next.trim()
+
+      // Read from the live URL rather than from a captured prop, which would be
+      // whatever it was when this keystroke happened. A navigation that changes
+      // nothing renders nothing, so counting it would leave the tally
+      // permanently high and swallow the next real back navigation.
+      const current = new URLSearchParams(window.location.search).get('q')?.trim() ?? ''
+      if (trimmed === current) return
+
+      setPendingNavigations((pending) => pending + 1)
+
       router.replace(trimmed === '' ? '/search' : `/search?q=${encodeURIComponent(trimmed)}`)
     }, SEARCH_DEBOUNCE_MS)
   }
