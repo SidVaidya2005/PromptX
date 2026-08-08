@@ -9,6 +9,7 @@ import { ConversationListSkeleton } from '@/components/sidebar/ConversationListS
 import { CollapseToggle } from '@/components/shell/CollapseToggle'
 import { ShowArchivedToggle } from '@/components/shell/ShowArchivedToggle'
 import { SidebarFooter } from '@/components/shell/SidebarFooter'
+import { SidebarNav } from '@/components/shell/SidebarNav'
 
 import type { ConversationSummary, ShellUser } from '@/types/domain'
 
@@ -50,13 +51,17 @@ export function Sidebar({ user, conversations, showArchived }: SidebarProps) {
         <CollapseToggle column="sidebar" className="hidden desktop:inline-flex" />
       </div>
 
-      <div className="p-sm">
+      <div className="flex flex-col gap-sm p-sm">
         <Button asChild variant="primary" className="w-full justify-start">
           <Link href="/chat">
             <PlusIcon />
             New chat
           </Link>
         </Button>
+
+        {/* Outside the scrolling <nav> below, so the workspace links stay put
+            while a long conversation list scrolls past them. (F24) */}
+        <SidebarNav />
       </div>
 
       {/* min-h-0 is what lets this scroll instead of pushing the footer off the
