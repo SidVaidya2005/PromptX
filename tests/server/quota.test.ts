@@ -471,6 +471,36 @@ describe('reconcile_shared_key_usage', () => {
     expect(row?.compare_count).toBe(2)
   })
 
+  it('does not let a promoted comparison block a refund it should have made', async () => {
+    /**
+     * **The arithmetic behind F32's `used_shared_key: false`.**
+     *
+     * Promoting writes the chosen answer as an assistant row, and the shared key
+     * really did produce it — but F31 already recorded that spend in
+     * `compare_count`. Marking the row `true` would count one generation twice,
+     * raising `actual`; and because the sweep only ever *lowers*, the inflated
+     * floor keeps an unrelated orphaned slot claimed. The user is then charged
+     * for a generation they never received, ten minutes after the fact, with
+     * nothing on screen to say so.
+     *
+     * Here: one comparison (claimed and promoted) plus one slot orphaned by a
+     * dead process. `actual` must be 1 — the comparison — so the orphan comes
+     * back.
+     */
+    const conversationId = await seedDeliveredSharedMessage('complete', 0, false)
+
+    try {
+      await setCount(2, 1)
+      await ageRow(10)
+
+      await admin.rpc('reconcile_shared_key_usage')
+
+      expect((await readRow())?.message_count).toBe(1)
+    } finally {
+      await admin.from('conversations').delete().eq('id', conversationId)
+    }
+  })
+
   it('reconciles a mixed day down to the messages plus the comparisons', async () => {
     // The case that separates "counts comparisons" from "gave up and stopped
     // reconciling". One delivered message, one comparison, and two slots that
@@ -534,6 +564,12 @@ describe('reconcile_shared_key_usage', () => {
   async function seedDeliveredSharedMessage(
     status: 'complete' | 'streaming' = 'complete',
     ageMinutes = 0,
+    /**
+     * False seeds a PROMOTED row — F32's copy of a comparison's answer, written
+     * with `used_shared_key: false` because F31 already counted that spend in
+     * `compare_count`. The sweep must not see it as evidence of a second one.
+     */
+    usedSharedKey = true,
   ): Promise<string> {
     const { data: conversation, error: conversationError } = await admin
       .from('conversations')
@@ -555,7 +591,7 @@ describe('reconcile_shared_key_usage', () => {
       role: 'assistant',
       content: 'seeded',
       status,
-      used_shared_key: true,
+      used_shared_key: usedSharedKey,
       provider: 'google',
       model_id: SHARED_MODEL_ID,
       created_at: new Date(Date.now() - ageMinutes * 60_000).toISOString(),

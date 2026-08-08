@@ -285,6 +285,43 @@ export const compareRequestSchema = z
 export type CompareRequest = z.infer<typeof compareRequestSchema>
 
 /**
+ * The body of `POST /api/compare/promote`. (F32)
+ *
+ * **`answer` is the one field in this file that carries assistant content from a
+ * client**, and it is worth being explicit about why that is allowed here and
+ * nowhere else. The compare view persists nothing, so the text the user chose
+ * exists only in their browser; there is no row to promote from. The invariant
+ * it brushes against — history is never taken from the request body — exists to
+ * stop a client steering a *completion* with a fabricated past, and the route
+ * behind this schema calls no provider at all.
+ *
+ * The accepted consequence, recorded rather than hidden: a crafted body can
+ * store an assistant turn no model produced, in the caller's own conversation,
+ * and `/share/[slug]` will publish it. Any other route that grows a field like
+ * this is a bug.
+ *
+ * Both strings carry `chatSendSchema`'s text-part cap rather than a figure of
+ * their own — a prompt promoted from a comparison is the same prompt the
+ * composer would have accepted, and a bound that differed would make one surface
+ * refuse what the other allowed.
+ *
+ * `provider` and `modelId` describe which model produced the answer. The route
+ * checks them against the catalog with `findModel()`, for the reason
+ * `updateConversationModelSchema` records: membership is that function's answer,
+ * and a schema that also knew the catalog would be a second copy of the rule.
+ */
+export const promoteComparisonSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(100_000),
+    answer: z.string().trim().min(1).max(100_000),
+    provider: providerSchema,
+    modelId: z.string().min(1).max(120),
+  })
+  .strict()
+
+export type PromoteComparisonInput = z.infer<typeof promoteComparisonSchema>
+
+/**
  * The body of `POST /api/title`.
  *
  * Not nullable, unlike the chat route's: titling names a conversation that

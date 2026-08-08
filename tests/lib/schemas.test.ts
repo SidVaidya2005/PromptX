@@ -14,6 +14,7 @@ import {
   chatSendSchema,
   compareRequestSchema,
   createPromptSchema,
+  promoteComparisonSchema,
   updateConversationSchema,
 } from '@/lib/schemas'
 
@@ -588,5 +589,56 @@ describe('compareRequestSchema', () => {
     expect(compareRequestSchema.safeParse({ ...base, message: base.prompt }).success).toBe(
       false,
     )
+  })
+})
+
+describe('promoteComparisonSchema', () => {
+  const base = {
+    prompt: 'which of you is better at SQL',
+    answer: 'Neither of us can run one.',
+    provider: 'openrouter' as const,
+    modelId: 'anthropic/claude-opus-5',
+  }
+
+  it('accepts a prompt, an answer, and the model that produced it', () => {
+    expect(promoteComparisonSchema.safeParse(base).success).toBe(true)
+  })
+
+  it('requires an answer, which is the whole point of promoting', () => {
+    // The compare view persists nothing, so an absent answer is not something
+    // the server can fill in from a row — there is no row. It has to be refused.
+    expect(
+      promoteComparisonSchema.safeParse({
+        prompt: base.prompt,
+        provider: base.provider,
+        modelId: base.modelId,
+      }).success,
+    ).toBe(false)
+    expect(promoteComparisonSchema.safeParse({ ...base, answer: '   ' }).success).toBe(false)
+  })
+
+  it('refuses a conversationId, which would make this an append', () => {
+    // `.strict()` earns its place here more than anywhere else in this file.
+    // Stripping an undeclared key would let a body aimed at an EXISTING
+    // conversation be answered as though a new one had been asked for — or,
+    // worse, invite someone to add the field later and have it silently ignored
+    // while the caller believes assistant text is being appended to a thread.
+    const parsed = promoteComparisonSchema.safeParse({
+      ...base,
+      conversationId: '11111111-2222-4333-8444-555555555555',
+    })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('trims both strings', () => {
+    const parsed = promoteComparisonSchema.safeParse({
+      ...base,
+      prompt: '  ask  ',
+      answer: '  reply  ',
+    })
+
+    expect(parsed.success && parsed.data.prompt).toBe('ask')
+    expect(parsed.success && parsed.data.answer).toBe('reply')
   })
 })
