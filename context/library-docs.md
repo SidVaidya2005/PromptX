@@ -991,7 +991,10 @@ earlier — the same problem the `storageState` rule below solves for the specs.
 
 **Rules:**
 
-- Four specs only, matching `code-standards.md` → Testing. Do not grow the E2E suite to cover what a unit test can prove.
+- Four **flow** specs, matching `code-standards.md` → Testing, plus the audit suite F37 added: `accessibility`, `keyboard`, `responsive`, `live-region` and `performance`. Do not grow the E2E suite to cover what a unit test can prove — the audit specs earn their place precisely because no unit test here can see a rendered tree.
+- **`toBeVisible()` ignores opacity.** It checks display, visibility and a non-empty box, so a fully transparent control passes. For anything revealed by `hover:`/`pointer-coarse:`, compute the effective opacity up the ancestor chain — the reveal class usually sits on a wrapper, so even `toHaveCSS('opacity', '1')` on the control itself passes regardless. Both weaker forms were measured passing with the reveal rule deleted. (F37)
+- **Read a transitioning value with `expect.poll`, never once.** Anything with `transition-colors` returns its pre-transition value in the same tick as the interaction — the F07 trap, met again at F37 on the composer's focus border.
+- **The sidebar exists twice in the DOM**, so `.first()` can resolve to the hidden copy. Use `.locator('visible=true')`. And a control resting at `opacity: 0` behind a full-row `after:inset-0` overlay needs a real `hover()` before it will take a click, exactly as a mouse user would. (F11, met again F37)
 - Tests run against the hosted Supabase development project, never against production or a live provider API. There is no local instance; specs create and tear down their own fixtures, reusing the pattern in `tests/rls/isolation.test.ts`.
 - Google OAuth is not driven through a real consent screen. Seed a test user and inject the session cookie via `storageState`.
 - **Provider calls cannot be intercepted with `page.route()`, and this line used to say they were.** `page.route()` sees *browser* requests, and the browser never contacts a provider here — `streamText` runs inside `/api/chat` and `probeKey` inside `/api/keys`, both server-side. What the specs intercept is the application's **own** routes, answered with canned responses. No test spends real money, which was always the real requirement. (F36)

@@ -886,6 +886,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Axe run over every route with no serious or critical violations outstanding
 - `prefers-reduced-motion` respected by every transition
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **Four of this section's requirements were already met before the feature started**, and are verified rather than rebuilt: `prefers-reduced-motion` (already in `globals.css`, and already using `animation-duration: 0.01ms` rather than `animation: none` — which is what keeps Radix's `animationend` firing and avoids the F05 stranded-panel trap), the `:focus-visible` ring, `unoptimized` on every `next/image`, and a `pointer-coarse` counterpart in all four files carrying a hover-reveal rule
+- **The audit is committed, and the "four specs and no more" rule is amended rather than broken quietly.** That rule exists to stop the E2E suite growing to cover what a unit test can prove; axe proves something no unit test in this project can reach, because `vitest.config.ts` runs a node environment and can see nothing rendered. `@axe-core/playwright` joins the approved list with its reason, and both `code-standards.md` and `library-docs.md` now say "four **flow** specs, plus the audit suite". A one-time audit would decay the moment the next component landed
+- **The live region announces status, not tokens.** §37 says "the thread is a live region so streaming text is announced", and the literal reading is unusable: a polite region over growing text re-announces on every delta and queues rather than replaces, so a screen reader talks over itself for the length of the answer. A visually-hidden `aria-live="polite"` region reports the transition — generating, then the settled answer — and the streaming text carries `aria-busy` instead
+- **Vitals are measured directly and Lighthouse waits for F38.** LCP, CLS and INP come from `PerformanceObserver` against the production build and first-load JS from the `next build` table. F38 already re-runs Lighthouse against production on a warm instance, which is the only place the composite score means anything — a local run flatters both the network and the region
+- **The long-thread question is decided on a number, not a preference.** `MESSAGE_PAGE_SIZE` has been referenced nowhere since F01, and the Phase 1 open item asked for exactly this: measure a 200-message conversation, then either accept it with the figure recorded or paginate. A constant no code reads is a decision nobody made
+- **Serious and critical axe findings are fixed; moderate and minor are recorded.** §37's wording is "no serious or critical violations outstanding", and silently fixing or silently dropping the rest would both misreport what the pass did
+
 **Performance budget** — measured against a **warm** instance, so the free-tier
 wake is excluded and the numbers describe the app rather than the plan:
 
