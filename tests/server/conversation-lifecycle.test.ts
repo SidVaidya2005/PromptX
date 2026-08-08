@@ -11,6 +11,7 @@ import {
   shareConversation,
   touchConversation,
   unshareConversation,
+  updateConversationModel,
 } from '@/server/data/conversations'
 
 import type { Database } from '@/types/database'
@@ -247,6 +248,51 @@ describeHosted('listConversations', () => {
     await seedConversation(owner.id, { title: 'mine' })
 
     expect((await listConversations()).map((row) => row.title)).toEqual(['mine'])
+  })
+})
+
+describeHosted('updateConversationModel', () => {
+  it('records the provider and the model together', async () => {
+    // Selection is keyed on the PAIR, never the id alone: the same model appears
+    // under two providers with different ids and different bills. (F15)
+    const id = await seedConversation(owner.id)
+
+    expect(
+      await updateConversationModel(id, {
+        provider: 'openrouter',
+        modelId: 'anthropic/claude-sonnet-5',
+      }),
+    ).toBe(true)
+
+    const row = await readRow(id)
+    expect(row?.provider).toBe('openrouter')
+    expect(row?.model_id).toBe('anthropic/claude-sonnet-5')
+  })
+
+  it('reports false for a conversation the caller does not own, and changes nothing', async () => {
+    const theirs = await seedConversation(stranger.id)
+
+    expect(
+      await updateConversationModel(theirs, {
+        provider: 'openai',
+        modelId: 'planted',
+      }),
+    ).toBe(false)
+
+    expect((await readRow(theirs))?.model_id).toBe('gemini-3.6-flash')
+  })
+
+  it('leaves updated_at alone, because changing the model is not activity', async () => {
+    const id = await seedConversation(owner.id, {
+      updated_at: '2025-01-01T00:00:00.000Z',
+    })
+
+    await updateConversationModel(id, {
+      provider: 'google',
+      modelId: 'gemini-3.5-flash',
+    })
+
+    expect((await readRow(id))?.updated_at).toBe('2025-01-01T00:00:00+00:00')
   })
 })
 

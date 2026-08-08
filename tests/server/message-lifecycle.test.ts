@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import {
   appendMessage,
   completeMessage,
+  editMessageAndTruncate,
   failMessage,
   getMessage,
   listByConversation,
@@ -307,6 +308,61 @@ describeHosted('failMessage', () => {
   })
 })
 
+describeHosted('editMessageAndTruncate', () => {
+  it('rewrites the prompt, removes what came after it, and reports the count', async () => {
+    // The SQL function has its own suite. What is exercised here is the wrapper
+    // nothing had ever called — the argument names it passes and the null it
+    // maps. F13 is why that matters: `bytea` corruption lived in exactly this
+    // layer, reported success, and only surfaced when something tried to
+    // decrypt.
+    const promptId = await appendMessage({
+      conversationId,
+      userId: owner.id,
+      role: 'user',
+      content: 'original question',
+    })
+    await appendMessage({
+      conversationId,
+      userId: owner.id,
+      role: 'assistant',
+      content: 'answer to the original',
+    })
+
+    const removed = await editMessageAndTruncate(promptId, 'a better question')
+
+    expect(removed).toBe(1)
+    expect((await listByConversation(conversationId)).map((m) => m.content)).toEqual([
+      'a better question',
+    ])
+  })
+
+  it('returns null rather than throwing for a message that is not the caller’s', async () => {
+    // Missing, not owned, and not a user message must stay indistinguishable —
+    // the function returns null for all three, and the route turns that into a
+    // 404 without disclosing which it was.
+    const theirs = await seedConversation(stranger.id)
+    const { data } = await admin
+      .from('messages')
+      .insert({
+        conversation_id: theirs,
+        user_id: stranger.id,
+        role: 'user',
+        content: 'not yours',
+      })
+      .select('id')
+      .single()
+
+    expect(await editMessageAndTruncate(data?.id ?? '', 'hijacked')).toBeNull()
+
+    const { data: after } = await admin
+      .from('messages')
+      .select('content')
+      .eq('id', data?.id ?? '')
+      .maybeSingle()
+    expect(after?.content).toBe('not yours')
+  })
+})
+
 describeHosted('getMessage', () => {
   it('returns the caller’s own message', async () => {
     const id = await appendMessage({
@@ -360,10 +416,19 @@ describeHosted('listByConversation', () => {
     // after this one". Display and truncation must agree by construction, or a
     // reply can survive beneath a prompt that no longer produced it. (F19)
     const stamp = new Date().toISOString()
-    const first = '00000000-0000-4000-8000-000000000001'
-    const second = '00000000-0000-4000-8000-000000000002'
 
-    await admin.from('messages').insert([
+    // Two ids sharing a random prefix and differing only in the final nibble.
+    // The tiebreak is therefore deterministic — `first` sorts below `second`
+    // every run — without the ids being CONSTANT, which is what broke this:
+    // `edit-message.test.ts` pins the same two literals for F19's own tie test,
+    // Vitest runs files in parallel, and whichever inserted second collided on
+    // the primary key. The failure read as an ordering bug because the insert's
+    // error was not checked; it is now.
+    const base = crypto.randomUUID().slice(0, -1)
+    const first = `${base}1`
+    const second = `${base}2`
+
+    const { error: seedError } = await admin.from('messages').insert([
       {
         id: second,
         conversation_id: conversationId,
@@ -381,6 +446,10 @@ describeHosted('listByConversation', () => {
         created_at: stamp,
       },
     ])
+
+    // A seed that fails silently turns every assertion below into a statement
+    // about an empty table.
+    if (seedError) throw seedError
 
     const thread = await listByConversation(conversationId)
 

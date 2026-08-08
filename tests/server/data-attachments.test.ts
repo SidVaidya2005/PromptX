@@ -7,6 +7,7 @@ import {
   deleteAttachment,
   downloadAttachmentBytes,
   getAttachment,
+  linkAttachmentsToMessage,
   listAttachmentsByIds,
   markAttachmentReady,
   readObjectFacts,
@@ -368,6 +369,36 @@ describeHosted('deleteAttachment', () => {
 
     const paths = draft.uploads.map((upload) => upload.path)
     expect(await Promise.all(paths.map(objectExists))).toEqual([true, true, true])
+  })
+})
+
+describeHosted('linkAttachmentsToMessage', () => {
+  it('links the ready rows and reports how many it took', async () => {
+    // The Postgres function has its own suite in attachments.test.ts. What runs
+    // here is the wrapper nothing had called — the argument names it passes and
+    // the count it maps out of a null. A caller that sent more ids than the
+    // returned count treats the shortfall as a failure, so a wrapper quietly
+    // returning 0 would turn every send with an attachment into an error.
+    const draft = await seedReadyDraft(owner)
+    await markAttachmentReady(draft.id, { sizeBytes: 13, mimeType: 'image/png' })
+    const messageId = await seedConversationWithMessage(owner.id)
+
+    expect(await linkAttachmentsToMessage(messageId, [draft.id])).toBe(1)
+    expect((await getAttachment(draft.id))?.message_id).toBe(messageId)
+  })
+
+  it('makes no round trip for an empty list', async () => {
+    expect(await linkAttachmentsToMessage(crypto.randomUUID(), [])).toBe(0)
+  })
+
+  it('links none of a draft that was never confirmed', async () => {
+    // The function repeats the ready-and-unlinked conditions inside its own
+    // where clause, so the check and the write cannot be raced apart.
+    const draft = await seedReadyDraft(owner)
+    const messageId = await seedConversationWithMessage(owner.id)
+
+    expect(await linkAttachmentsToMessage(messageId, [draft.id])).toBe(0)
+    expect((await getAttachment(draft.id))?.message_id).toBeNull()
   })
 })
 

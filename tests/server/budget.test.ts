@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   afterAll,
   afterEach,
@@ -19,12 +19,14 @@ import {
   BudgetExhaustedError,
   isSharedKeyAvailable,
   recordSharedBudgetTokens,
+  recordSharedKeyTokens,
   reserveSharedSlot,
 } from '@/server/quota'
 import { createServerSupabaseClient } from '@/server/supabase'
 
 import type { Database } from '@/types/database'
 
+import { budgetGuard } from '../support/budget-guard'
 import { requiredEnv } from '../support/env'
 import { describeHosted } from '../support/hosted'
 
@@ -56,11 +58,12 @@ vi.mock('@/server/supabase', async (importOriginal) => ({
  * The row is therefore snapshotted in `beforeAll` and restored after **every
  * test**, and that is not tidiness: without it a run of this suite would leave
  * the shared key tripped for real, and the previous month's totals gone. See
- * `restoreSnapshot` below for why per-test rather than per-suite, and for the
- * residual that remains.
+ * `tests/support/budget-guard.ts` for why per-test rather than per-suite, and
+ * for the residual that remains.
  */
 
 const SUPABASE_URL = requiredEnv('NEXT_PUBLIC_SUPABASE_URL')
+const PUBLISHABLE_KEY = requiredEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
 const SECRET_KEY = requiredEnv('SUPABASE_SECRET_KEY')
 
 const admin = createClient<Database>(SUPABASE_URL, SECRET_KEY, {
@@ -68,8 +71,6 @@ const admin = createClient<Database>(SUPABASE_URL, SECRET_KEY, {
 })
 
 type Budget = Database['public']['Tables']['shared_key_budget']['Row']
-
-let snapshot: Budget | undefined
 
 /** The first of the current UTC month, which is what period_month stores. */
 function thisMonth(): string {
@@ -113,57 +114,15 @@ const OVER_CEILING_INPUT_TOKENS = Math.ceil(
   ((SHARED_KEY_MONTHLY_USD_CEILING + 1) * 1_000_000) / SHARED_KEY_INPUT_USD_PER_MILLION,
 )
 
-/**
- * Column by column rather than spreading the row, so `id` is never in the patch
- * — it carries a check constraint pinning it to 1, and this suite has no
- * business writing it back.
- */
-async function restoreSnapshot(): Promise<void> {
-  if (!snapshot) return
-
-  await setBudget({
-    period_month: snapshot.period_month,
-    input_tokens: snapshot.input_tokens,
-    output_tokens: snapshot.output_tokens,
-    estimated_usd: snapshot.estimated_usd,
-    tripped_at: snapshot.tripped_at,
-  })
-}
-
-/**
- * An abort between the snapshot and the restore leaves the shared key genuinely
- * tripped for real users — which is not a prediction: a network fault did it at
- * F19 and the row sat at `estimated_usd = 11.0000` until it was repaired by
- * hand. There is no local stack to isolate against, so the exposure cannot be
- * removed; it can only be made short and hard to escape.
- *
- * `afterEach` shrinks the window from the length of the suite to the length of
- * one test, and the signal handlers cover the other way out — Ctrl-C, an
- * unhandled rejection, a worker torn down mid-run. `process.once` rather than
- * `on`, so a second signal during the repair still kills the process rather than
- * queueing another write.
- *
- * **The residual is real and stays on the record:** a fault *during* the restore
- * call itself still leaves the row wrong, and no arrangement of hooks fixes
- * that. Only a local stack would, which is F02's open consequence.
- */
-const REPAIR_SIGNALS = ['SIGINT', 'SIGTERM', 'uncaughtException'] as const
-
-for (const event of REPAIR_SIGNALS) {
-  process.once(event, () => {
-    void restoreSnapshot().finally(() => {
-      process.exit(1)
-    })
-  })
-}
+const ledger = budgetGuard(admin)
 
 beforeAll(async () => {
-  snapshot = await readBudget()
+  await ledger.take()
 })
 
-afterEach(restoreSnapshot)
+afterEach(ledger.restore)
 
-afterAll(restoreSnapshot)
+afterAll(ledger.restore)
 
 beforeEach(async () => {
   await setBudget({
@@ -366,5 +325,127 @@ describeHosted('the accounting month rolling over', () => {
     expect(budget.output_tokens).toBe(8)
     expect(budget.tripped_at).toBeNull()
     expect(await isSharedKeyAvailable()).toBe(true)
+  })
+})
+
+
+/**
+ * `recordSharedKeyTokens` lives HERE rather than beside the other quota wrapper
+ * in `quota-wrappers.test.ts`, and the reason is structural.
+ *
+ * It writes a user's own row **and** forwards to `recordSharedBudgetTokens()`,
+ * so it mutates the global singleton. Vitest runs test files in parallel, so a
+ * second file touching that row races this one however carefully each restores
+ * — measured, not predicted: both suites went red together at
+ * `expected 10814 to be 420`. Exactly one file may write `shared_key_budget`,
+ * and it is this one.
+ */
+describeHosted('recordSharedKeyTokens', () => {
+  const USAGE_DATE = new Date().toISOString().slice(0, 10)
+  let userId: string
+  let sessionClient: SupabaseClient<Database>
+
+  beforeAll(async () => {
+    const email = `budget-usage-${crypto.randomUUID()}@promptx.test`
+    const password = crypto.randomUUID()
+
+    const { data: created, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    })
+    if (error || !created.user) throw new Error(`could not create user: ${error?.message}`)
+    userId = created.user.id
+
+    sessionClient = createClient<Database>(SUPABASE_URL, PUBLISHABLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const { error: signInError } = await sessionClient.auth.signInWithPassword({
+      email,
+      password,
+    })
+    if (signInError) throw new Error(`could not sign in: ${signInError.message}`)
+  }, 30_000)
+
+  afterAll(async () => {
+    const result = await admin.auth.admin.deleteUser(userId)
+    if (result.error) {
+      console.error('[tests/budget] could not delete the usage fixture user', result.error)
+    }
+  }, 30_000)
+
+  beforeEach(async () => {
+    // The factory stays a vi.fn() for the ordering test above, which proves the
+    // reservation client is never even constructed while the breaker is tripped.
+    // Each test here hands it a real session instead.
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(
+      sessionClient as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>,
+    )
+
+    const { error } = await admin.from('shared_key_usage').upsert(
+      {
+        user_id: userId,
+        usage_date: USAGE_DATE,
+        message_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+      },
+      { onConflict: 'user_id,usage_date' },
+    )
+    if (error) throw error
+  })
+
+  async function readUsage() {
+    const { data, error } = await admin
+      .from('shared_key_usage')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('usage_date', USAGE_DATE)
+      .maybeSingle()
+
+    if (error) throw error
+    return data
+  }
+
+  it('accumulates measured tokens on the caller’s own row', async () => {
+    await recordSharedKeyTokens(userId, { inputTokens: 50, outputTokens: 5 })
+
+    const usage = await readUsage()
+    expect(usage?.input_tokens).toBe(50)
+    expect(usage?.output_tokens).toBe(5)
+  })
+
+  it('writes the global ledger too, which the function name does not mention', async () => {
+    // "On both ledgers" is the contract, and the global half is the easy one to
+    // lose: the breaker would undercount every ordinary message while the
+    // per-user meter went on looking perfectly correct.
+    const before = await readBudget()
+
+    await recordSharedKeyTokens(userId, { inputTokens: 60, outputTokens: 6 })
+
+    const after = await readBudget()
+    expect(after.input_tokens - before.input_tokens).toBe(60)
+    expect(after.output_tokens - before.output_tokens).toBe(6)
+  })
+
+  it('never moves the message count, because accounting is not enforcement', async () => {
+    // Nothing is refused on the strength of these numbers — the daily limit
+    // counts messages and the breaker is checked before a request — so a usage
+    // report arriving late cannot lock anybody out of anything.
+    await recordSharedKeyTokens(userId, { inputTokens: 20, outputTokens: 2 })
+
+    expect((await readUsage())?.message_count).toBe(1)
+  })
+
+  it('writes nothing at all when the provider reported no usage', async () => {
+    // Measured tokens only. An estimate entering the ledger that drives the
+    // circuit breaker trips it for everyone on invented data.
+    const before = await readBudget()
+
+    await recordSharedKeyTokens(userId, {})
+
+    const usage = await readUsage()
+    expect(usage?.input_tokens).toBe(0)
+    expect((await readBudget()).input_tokens).toBe(before.input_tokens)
   })
 })
