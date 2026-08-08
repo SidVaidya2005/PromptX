@@ -710,6 +710,17 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - `supportsImages` and `supportsPdf` read from the catalog in `src/lib/models.ts`
 - The server independently rejects file parts sent to a model that cannot accept them — the client-side gate is convenience, not enforcement
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The catalog gains a genuinely text-only model, because otherwise nothing here can be reached.** Every entry shipped by F14 sets both flags true, so the disabled button, the tooltip, the warning and the server refusal would all be unreachable and unverifiable — the "guard with nothing to refuse" F28 recorded, arriving by construction this time. Listed on the evidence of `architecture.input_modalities` being `["text"]` from OpenRouter's models endpoint, then **proven by a real send through the application**: the key lives encrypted in the vault and only the server can decrypt it, so F14's curl is not available. Same standard, different road. An entry that does not answer comes back out
+- **One definition, three readers.** `acceptedMimeTypes(provider, modelId)` is the primitive; "accepts no files" is an empty result and "accepts this file" is membership in it. The attach button, the file input's `accept`, the switch warning and the server's refusal all read it — the `isSharedModel` / `willUseSharedKey` shape, for the same reason: two spellings of one rule disagree invisibly
+- **The gate is per file type, not per model.** The button is disabled only when the model accepts *neither* — §30's own "accepts no files" — and a model that reads images but not PDFs keeps a live button with a narrowed `accept`. Anything coarser makes one of the two flags dead data
+- **The attach button uses `aria-disabled`, never `disabled`.** A disabled button fires no pointer events, so a Radix tooltip on one never opens — the tooltip explaining why it is disabled would be the single unreachable thing on screen
+- **Switching drops only the incompatible files, and drops means deletes** — row and all three objects, the path F29's remove control already takes. An `AlertDialog` per the F11 rule names the count first; cancelling leaves both the model and the files alone
+- **The server check sits above the "will reach a provider" line** with F28's other attachment checks, so a refusal writes nothing. It runs only when `findModel()` returns a model, leaving an unknown id to `resolveModel()`'s `unknown_model` rather than answering it with a confusing capability error
+- **History file parts are filtered rather than refused.** A model that cannot read an earlier image simply does not receive it, so one image in turn one does not bar every text-only model from the conversation forever. The cost is stated rather than hidden: the model silently cannot see something the thread visibly contains, and nothing on screen says so
+- **A test pins that at least one entry accepts nothing**, so a future catalog tidy-up cannot quietly return this feature to being decorative with nothing failing
+
 ---
 
 ## Phase 6 — Compare, share, export

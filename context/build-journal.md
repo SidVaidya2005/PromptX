@@ -93,6 +93,29 @@ At that phase's checkpoint, the whole phase collapses to:
 - **Attachment-only messages are refused**, because the route requires non-empty text and the composer agrees. Nobody has asked for the alternative.
 - **A Next hint that inline images should carry `loading="eager"`** when they are the LCP element. Advisory; worth a look in F37's pass.
 
+### Feature 30 — Capability gating  *(2026-08-08)*
+
+- Decision: **the catalog gained two models, because the gate had nothing to refuse.** Every entry F14 shipped set both flags true, so a disabled button, a warning and a server refusal were all unreachable. `deepseek/deepseek-v4-flash` (`"modality": "text->text"`, `input_modalities: ["text"]`) and `meta-llama/llama-4-maverick` (`["text","image"]`, no `"file"`), both read from OpenRouter's `/api/v1/models` and then **proven by real sends through the application** — the key is encrypted in the vault, so F14's curl was not available. DeepSeek answered "DEEPSEEK OK"; Llama described an attached image unprompted.
+- Decision: **`acceptedMimeTypes()` is the single definition**, read by the attach button, the input's `accept`, the switch warning and the server. Derived from the flags rather than stored.
+- Decision: **per file type, not per model.** The button disables only when the model reads neither; one flag true narrows `accept` instead. Anything coarser makes one of the two flags dead data.
+- Decision: **`aria-disabled`, not `disabled`**, on the attach button — a disabled button fires no pointer events and the tooltip explaining the state would never open.
+- Decision: **history is filtered, the current turn is refused.** A thread with an old image stays usable on a text-only model; the cost is that the model cannot see it and nothing says so.
+- Decision: the server check sits above the provider line and is guarded on `findModel()`, so a mistyped id keeps `unknown_model`.
+- Gotcha: **the flag-swap mutation passed.** Exchanging `supportsImages` and `supportsPdf` left all 24 tests green, because no catalog entry had the two differing — the tests could not distinguish the flags any more than the product could. Run before the code was believed, which is the only reason it was caught. Adding Llama 4 Maverick made the same mutation turn exactly one test red.
+- Gotcha: **a literal JSX space did not reach the DOM.** The tooltip read "DeepSeek V4 Flashcan't read files" with the source plainly showing `{modelLabel} can&rsquo;t`. `textContent` confirmed the space was genuinely absent; `{' '}` fixed it. Found by reading the DOM, not the file.
+- Gotcha: `playwright-cli` refs again — `[checked]`, `[disabled]` and `[active]` markers sit between the label and `[ref=…]`, so three greps matched nothing and read as broken features. Match on `\\[ref=` specifically.
+- Verified: attach `aria-disabled` with a working tooltip on the text-only model; `accept` narrowed to the four image types on the images-only one with the button still live; a dropped PDF refused there by name with no chip created.
+- Verified: switching with one image and one PDF names **1 file**; Cancel leaves both chips and the old model; Confirm switches, and the PDF's row and object are gone while the image's row and all three objects remain.
+- Verified: crafted requests — `400 attachment_unsupported` for a PDF at either restricted model, `200` for an image at the images-only model, `400 unknown_model` for a bogus id, and no conversation or message written by any refusal. The `findModel` guard proven load-bearing by mutation: without it the bogus id answers `attachment_unsupported`.
+- Verified: a thread containing an image answers on the text-only model, which said it had no record of an image — the filtering decision behaving exactly as its cost was stated. 389 tests, typecheck, lint and a production build green.
+
+**Open after F30.**
+
+- **Nothing tells a user that an earlier attachment is invisible to the model they just switched to.** That was the third option on the history question and was not chosen; it needs a message-level notice DESIGN.md does not describe. Worth revisiting at F37.
+- **`/compare` will need the same gate.** F31 resolves two models independently and nothing there reads `acceptedMimeTypes()` yet.
+- **Still no filename column**, carried from F29: a sent PDF renders as a chip reading "PDF".
+- The two new catalog entries bill the user's own OpenRouter key. Verification cost a few cents.
+
 ## Phase 4 — Prompt library and search *(compacted)*
 
 Four features on 2026-08-08, over two tables F02 had built and nothing had ever
