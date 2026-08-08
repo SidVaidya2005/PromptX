@@ -10,6 +10,7 @@ import {
 } from 'ai'
 
 import { STREAM_TIMEOUT_MS } from '@/lib/constants'
+import { acceptsMimeType, findModel } from '@/lib/models'
 import { chatRequestSchema } from '@/lib/schemas'
 import { toUIMessages, withFileParts } from '@/lib/messages'
 import { textOf } from '@/lib/utils'
@@ -302,6 +303,35 @@ export async function POST(request: Request) {
     linkedAttachments = attachmentIds
       .map((id) => rows.find((row) => row.id === id))
       .filter((row): row is Attachment => row !== undefined)
+
+    /**
+     * The model has to be able to read them. (F30)
+     *
+     * Independent of the composer's own gate, which is convenience: `accept` on
+     * a file input does not constrain a drop, and neither constrains a crafted
+     * request. This is the check that decides.
+     *
+     * Guarded on the model existing so an unknown id keeps its own answer.
+     * `acceptedMimeTypes()` returns nothing for a model it cannot find, which is
+     * the safe direction but the wrong *message* — `resolveModel()` says
+     * `unknown_model` a few lines below, and that is what someone who mistyped a
+     * model id needs to hear rather than a complaint about their attachment.
+     */
+    if (findModel(provider, modelId)) {
+      const unsupported = linkedAttachments.find(
+        (row) => !acceptsMimeType(provider, modelId, row.mime_type),
+      )
+
+      if (unsupported) {
+        return NextResponse.json(
+          {
+            error: `${findModel(provider, modelId)?.label ?? 'That model'} can't read that kind of file.`,
+            code: 'attachment_unsupported',
+          },
+          { status: 400 },
+        )
+      }
+    }
   }
 
   let model
@@ -504,6 +534,11 @@ export async function POST(request: Request) {
      * it became was written a few lines ago and nothing has re-keyed it yet.
      */
     const fileParts = await buildFileParts({
+      // What this model can read, so an older turn's image is dropped rather
+      // than refused. One picture in turn one must not bar every text-only
+      // model from the conversation for good — the cost, stated plainly, is
+      // that the model cannot see something the thread visibly contains.
+      accepts: (mimeType) => acceptsMimeType(provider, modelId, mimeType),
       history: historyRows,
       newest:
         linkedAttachments.length > 0 && !('regenerate' in body)

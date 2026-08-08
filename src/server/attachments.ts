@@ -112,6 +112,22 @@ export async function attachmentsByMessage(
  * started to accept.
  */
 export async function buildFileParts(options: {
+  /**
+   * What this model will read. (F30)
+   *
+   * A predicate rather than a model id, so this function stays about bytes and
+   * the catalog stays the caller's business — `acceptedMimeTypes()` is the one
+   * definition and this is a caller of it, not a second copy.
+   *
+   * **History is filtered, not refused.** A model that cannot read an earlier
+   * image simply does not receive it, so one picture in turn one does not bar
+   * every text-only model from the conversation for good. The cost is real and
+   * belongs on the record rather than in a comment nobody reads: the model
+   * silently cannot see something the thread visibly contains, and nothing on
+   * screen says so. The *current* turn never reaches this state — the route
+   * refuses an unreadable attachment outright, above the provider line.
+   */
+  accepts: (mimeType: string) => boolean
   /** The stored thread, whose message ids are also its UI message ids. */
   history: readonly Message[]
   /**
@@ -131,6 +147,10 @@ export async function buildFileParts(options: {
   for (const attachment of historyAttachments) {
     const messageId = attachment.message_id
     if (!messageId) continue
+
+    // Dropped for a model that cannot read it, rather than sent and refused by
+    // the provider. See the note on `accepts`.
+    if (!options.accepts(mediaTypeOf(attachment))) continue
 
     // A stale row whose object has gone is skipped rather than fatal. It is an
     // old turn; refusing the whole request would make one missing file into a
@@ -173,13 +193,7 @@ export async function buildFileParts(options: {
  */
 async function toFilePart(attachment: Attachment): Promise<FileUIPart | null> {
   const path = attachment.inline_path ?? attachment.storage_path
-
-  // The derivative is webp whatever the original was, so the media type has to
-  // follow the path rather than the row's own mime_type — which describes the
-  // file the user chose, not the one being sent.
-  const mediaType = attachment.inline_path
-    ? 'image/webp'
-    : attachment.mime_type
+  const mediaType = mediaTypeOf(attachment)
 
   const bytes = await downloadAttachmentBytes(path)
   if (!bytes) return null
@@ -189,4 +203,21 @@ async function toFilePart(attachment: Attachment): Promise<FileUIPart | null> {
     mediaType,
     url: `data:${mediaType};base64,${Buffer.from(bytes).toString('base64')}`,
   }
+}
+
+/**
+ * The media type of the object actually sent, which is not always the row's.
+ *
+ * An image is sent as its `_inline` derivative, and that is webp whatever the
+ * original was — so the type has to follow the path rather than `mime_type`,
+ * which describes the file the user chose. A PDF has no derivative and keeps its
+ * own type.
+ *
+ * The capability filter reads this too, and must: a model is asked whether it
+ * can read what is about to be sent, not what was uploaded. Both are images
+ * today, so the distinction changes no answer — it is here so it cannot start
+ * changing one silently.
+ */
+function mediaTypeOf(attachment: Attachment): string {
+  return attachment.inline_path ? 'image/webp' : attachment.mime_type
 }
