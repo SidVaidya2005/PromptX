@@ -17,9 +17,10 @@ progress, and what is next.
 
 ## Current Status
 
-**Phase:** Phase 4 — Prompt library and search, in progress
-**Last completed:** 27 Search interface — `/search` over `?q=`, results grouped by conversation without disturbing F26's ranking, ⌘K from anywhere, and a `?m=` deep link that reuses F18's `jumpTo`. Two gaps F18 left surfaced only now that search returns *assistant* messages: they had no scroll anchor at all, and no highlight — both fixed, the highlight as a left indicator rather than a border, because DESIGN.md is explicit that a response carries no chrome. The security claim was verified end to end in a browser: a message containing `<img src=x onerror=alert(1)>` renders as text with zero real `<img>` elements on the page. 360 tests, typecheck, lint and a production build green. **Phase 4's feature work is complete — the phase checkpoint is next.**
-**Previously completed:** 26 Full-text search backend — `search_messages` and `search_has_terms`, over a `search_vector` and GIN index that had sat unqueried since F02. Two facts were measured before any code: `ts_headline` does not escape the document it summarises, so snippets use control-character sentinels rather than `<mark>` and are plain text by construction; and a stopword-only query parses to an empty `tsquery`, so "no searchable terms" is a distinct answer from "no matches". §26's sub-500ms wall-clock assertion was replaced with `EXPLAIN ANALYZE` — 3.4–49.6ms over 5,001 rows, and the GIN index is correctly *not* used at this size, so no index was added. 348 tests, typecheck, lint and a production build green; advisors show only the documented notices
+**Phase:** Phase 4 closed — Phase 5 (Attachments) is next
+**Last completed:** Phase 4 checkpoint — 360 tests, typecheck, lint and a production build green; advisors clean of anything new (both security notices are the documented intentional ones, and `prompts_tags_idx` unused is now correct by design). The phase diff is 49 files and ~4,800 insertions across F24–F27, reviewed for consistency: both new routes authenticate before parsing and carry an `internal_error` catch, no `.eq('user_id')` stands in for RLS anywhere, no raw hex or named width utility reached a component, nothing is hover-revealed, and no TODO or `console.log` survived. **Two real defects found and fixed, both invisible to the suite:** the search input cleared itself for about a second on every query — and still lost characters after the first fix, because navigations land out of order — now resolved by counting outstanding navigations rather than comparing values; and F27's highlight had indented every assistant message by 18px, against a DESIGN.md line calling a response "full width of the message column", redrawn as a pseudo-element that occupies no layout. Phase 4's still-binding rules were promoted into `constraints.md` under a new **Prompt library** topic plus additions to Search, Design system and Chat and streaming, and `build-journal.md` collapsed from 377 lines to 165. Seven follow-ups recorded, none blocking
+**Previously completed:** 27 Search interface, and before it 24–26 — the prompt library, its composer picker, and ranked full-text search over two tables F02 built that nothing had ever used
+**Next:** Phase 5 — Attachments, opening with 28 Upload pipeline: the private bucket's size and mime limits, browser-side derivatives so no image is transformed on the request path, and the `reap-attachments` Edge Function whose `pg_cron` job has been registered and inert since F02
 
 ---
 
@@ -70,7 +71,7 @@ progress, and what is next.
 - [x] 25 Insert a prompt into the composer
 - [x] 26 Full-text search backend
 - [x] 27 Search interface
-- [ ] Phase checkpoint — verify Phase 4 — Prompt library and search is stable before starting the next phase
+- [x] Phase checkpoint — verify Phase 4 — Prompt library and search is stable before starting the next phase
 
 ### Phase 5 — Attachments
 

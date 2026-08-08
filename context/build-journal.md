@@ -38,247 +38,35 @@ At that phase's checkpoint, the whole phase collapses to:
 
 -->
 
-## Phase 4 — Prompt library and search
+## Phase 4 — Prompt library and search *(compacted)*
 
-### 2026-08-08 — 27 Search interface
+Four features on 2026-08-08, over two tables F02 had built and nothing had ever
+used: `prompts` (with both its indexes) and `messages.search_vector` with its
+GIN index. Two migrations added, both named from the ledger after applying.
+Everything still binding is filed in `constraints.md` under **Prompt library**,
+**Search**, **Design system** and **Chat and streaming**.
 
-`/search` as a Server Component over `?q=`, results grouped by conversation,
-⌘K from anywhere, and the deep link that lands a click on the right message.
-Closes the feature work in Phase 4.
+- **Prompt library (F24).** CRUD at `/prompts` with no migration needed, tag normalisation in the schema, a sidebar nav block because nothing linked to the page at all, and F23's deferred "Save to library" shortcut as an inline reveal rather than a nested dialog. One real defect, invisible to 320 green tests: `PromptDialog` seeded its fields in `onOpenChange`, which Radix never calls for a parent-driven open, so "New prompt" reopened holding the previous prompt and saving wrote a byte-for-byte duplicate. Fixed by mounting the dialog only while open, so `useState` initialisers do the seeding and no event can be missed.
+- **Insert a prompt into the composer (F25).** A vendored `popover.tsx` carrying a hand-rolled listbox — a Radix menu owns typing and arrows, so it cannot hold a filter field — over a module-level cache read once per page session and invalidated by the mutation hook. `GET /api/prompts` was added here, correcting F24's written prediction that this feature would reuse the page's server read; reusing it would have shipped every prompt body in the RSC payload of every chat load. Radix restores focus to the trigger *after* the composer's own focus call, so insertion landed the text and left focus on the button; `onCloseAutoFocus` fixes it, conditionally, so Escape still returns focus where it belongs.
+- **Full-text search backend (F26).** `search_messages` and `search_has_terms`, `security invoker`, grants revoked from `public`/`anon`. Two facts measured against the database before any code: `ts_headline` does **not** escape the document it summarises — an `<img onerror>` survived it verbatim and fragment selection cut another tag in half — so snippets are delimited with `chr(2)`/`chr(3)` and are plain text by construction; and a stopword-only query parses to an empty `tsquery`, so "no searchable terms" became a distinct answer. §26's sub-500ms wall-clock assertion was replaced by `EXPLAIN ANALYZE`, since from this laptop that number measures the network: 3.4ms for the body query and 16.8–49.6ms through the function over 5,001 rows, with the GIN index correctly unused at that size, so no index was added.
+- **Search interface (F27).** `/search` over `?q=`, grouped by conversation without disturbing the ranking, ⌘K on `window` with capture, and a `?m=` deep link reusing F18's `jumpTo`. Two gaps F18 left surfaced only because search returns *assistant* messages, which the outline rail never did: they had no scroll anchor and no highlight. The security claim was confirmed end to end in a browser — a message containing `<img src=x onerror=alert(1)>` renders as text with zero real `<img>` elements on the page.
+- **Mutation runs across the phase**, each turning red exactly the tests that claim it: tag dedupe before the cap, `updated_at` on a prompt edit, the delete row count, the picker's tag arm, the insertion separator, the snippet splitter, and group ordering. F26's run found something better than a pass — a test that could not fail, because it asserted on a `ts_headline` *fragment* that routinely omits the words it was matching.
 
-**Decisions taken before any code, agreed with the user:** the target message
-travels as `?m=<uuid>` so `Chat` reuses F18's `jumpTo` and its highlight rather
-than a hash Next does not reliably honour after hydration; debounced navigation
-uses `router.replace`, because pushing each keystroke turns Back into a walk
-through `d`, `de`, `dep`; ⌘K navigates rather than opening a palette, which
-would have needed the `GET /api/search` F26 deliberately did not build and a
-second copy of the results UI; and F26's flat 30-result cap stays, with grouping
-making its limit visible and recorded rather than fixed.
+**Found and fixed at the phase checkpoint**, both in F27 and both invisible to
+the suite:
 
-**Two gaps F18 left that only search exposes, both found by reading the code
-rather than by it breaking.** The outline rail lists prompts only, so nothing
-had ever needed an assistant message to be reachable:
+- **The search input cleared itself for about a second on every query.** It compared the incoming `query` against the value the debounce had just recorded in state — and recording it re-rendered *before* the navigation landed, so the comparison ran against a stale prop, read as an external change, and wiped the field. Keying the guard on the prop's own change fixed that and still lost text, because navigations land **out of order**: typing `deploy` then `deployment` let the slower `deploy` render arrive carrying a query nothing remembered. Now counted rather than compared — each landing consumes one outstanding navigation, and only a change arriving at zero may touch the draft. Both `react-hooks/refs` errors along the way were correct: a ref may be neither written nor read during render.
+- **Every assistant message was indented 18px.** F27's highlight used a real `border-l-2` plus `pl-lg`, so responses started at 334 where the column starts at 316 — against a DESIGN.md line that calls a response "full width of the message column". Redrawn as a pseudo-element in the gutter, which occupies no layout at all.
 
-- **`AssistantMessage` had no anchor at all.** Half of all search results point at answers, so half of them would have navigated to the right conversation and left the reader at the top with no indication of where the match was. It now carries `outlineAnchorId(id)` and `scroll-mt-lg`, exactly as `UserMessage` does. Verified: 61 anchors on a 61-message thread, zero duplicate ids document-wide even at 360px with the drawer open, where the sidebar is in the document twice.
-- **`isHighlighted` never reached `AssistantMessage` either**, so landing on an answer in a long thread said nothing about which message was meant. It does now — but as a 2px `border-primary` **left indicator**, not the border `UserMessage` uses: DESIGN.md `message-assistant` is explicit that a response carries no fill and no border, and the left rule is the marker `outline-rail-item` already uses for "this is the one you mean". The transparent border is always present so highlighting cannot reflow the thread.
+**Open at the close of Phase 4.**
 
-**The security claim, verified end to end in a browser rather than argued.**
-A seeded assistant message containing `<img src=x onerror=alert(1)>` was
-searched for and rendered: the tag appears as **text**, and
-`document.querySelectorAll('section img').length` is **0**. Nothing was parsed
-as markup anywhere on the path from `ts_headline` to the screen, which is what
-F26's sentinels were chosen for and what `toSnippetSegments` turns into real
-`<mark>` elements.
-
-**Verified in the browser:** ⌘K from `/chat` and from `/prompts` both land on
-`/search` with the input focused; typing `deploy` then `ment` produced
-`?q=deployment` and **one** Back returned to `/prompts` rather than walking the
-keystrokes; clicking a result on a 61-message thread scrolled to `scrollTop
-7272` with the target at `top: 492`, in viewport, and stripped `?m=` from the
-URL; the highlight fired on arrival and settled back for both roles; all three
-empty states render distinct sentences. Mutation runs: collapsing
-`toSnippetSegments` to one unsplit segment turns four tests red, and sorting
-groups by size instead of by best hit turns exactly the ordering test red.
-
-**Verified:** 360 tests green (27 files), typecheck, lint and a production build
-clean. Test conversations were deleted from the live project afterwards.
-
-**Open after this feature:**
-
-- **`websearch_to_tsquery` ANDs terms**, so `deployment rollback` finds only messages containing both. Correct websearch semantics and not a defect, but the "No matches" copy does not explain it, and a user typing two words is the likeliest way to meet it.
-- **A third strict-mode locator collision** in the browser pass, after F24 and F25 recorded the same lesson. `section li a` matched two rows. The habit that actually works is taking refs from `playwright-cli snapshot`, not composing CSS and hoping it is unique.
-
-### 2026-08-08 — 26 Full-text search backend
-
-`messages.search_vector` and `messages_search_idx` have existed since F02 and
-nothing had ever queried them. Two migrations —
-`20260808024702_search_messages` and its grants — plus `searchMessages()` and an
-eleven-test suite over 5,000 seeded messages.
-
-**Two facts were measured against the database before any code was written**,
-and both changed the design:
-
-- **`ts_headline` does not escape the document it summarises.** `<script>` was stripped but `<img src=x onerror=alert(2)>` came through verbatim, and fragment selection cut another tag in half leaving `onerror=alert(1)>`. Message content is model output and user input, so a snippet rendered as HTML would execute whatever someone put in a message. `StartSel`/`StopSel` are therefore `chr(2)`/`chr(3)` — verified to survive `ts_headline` and JSON encoding — and F27 splits on them into React elements. §27's "only `<mark>` is permitted" becomes a fact about the data rather than a rule to follow. `library-docs.md`'s snippet is amended in place with the finding.
-- **A stopword-only query parses to an empty `tsquery`**, which is detectable in SQL. So `searchMessages()` returns an outcome union and `search_has_terms` distinguishes "try different words" from "nothing here" — asked only when the result set is empty.
-
-**The mutation run found a test that could not fail, and it was not the test I
-predicted.** Weakening `messages`'s owner-read policy to `using (true)` left the
-whole suite **green**. The reason is structural: `search_messages` inner-joins
-`conversations`, whose own owner policy hides the stranger's conversation, so
-the row is dropped by the join whichever policy is weakened. Either policy alone
-is sufficient here — real defence in depth, but it means no test can single out
-the messages policy, and the comment claiming it did was wrong.
-
-Weakening **both** then turned exactly one test red — and it was *"finds nothing
-at all for a user with no messages"*, not the isolation test. The isolation
-assertion looked for the stranger's wording inside the snippet, and
-`ts_headline` returns a **fragment**: the leading words of a short message are
-routinely cut, so the substring was absent whether or not the row was there. It
-could never have failed. Rewritten to assert on `conversation_title`, which
-comes off the row rather than out of the headline, the same mutation turns
-**two** tests red. Both policies were restored and verified with
-`pg_get_expr(polqual, …)` immediately.
-
-**The performance claim, measured rather than asserted.** §26 asked for a
-sub-500ms wall-clock assertion; from this laptop to ap-southeast-1 that measures
-the network, so the suite asserts correctness and `EXPLAIN ANALYZE` answers the
-speed question. Over 5,001 messages with RLS active:
-
-| query | matches | execution |
-| --- | --- | --- |
-| `deployment pipeline` (common) | 1,000 | 49.6 ms through the function, 3.4 ms for the body |
-| `zylophone` (rare) | 1 | 16.8 ms through the function |
-
-**`messages_search_idx` is not used at this size, and that is correct.** The
-planner chose a sequential scan for both the 20%-selectivity term and the
-one-row term — the table is ~142 buffers, so scanning it beats a GIN scan plus
-heap fetches. Forcing `enable_seqscan = off` made it pick `messages_user_id_idx`
-(the RLS column), still not the GIN. So no index was added: the plan says the
-one that already exists is not yet earning its keep, which is a better answer
-than the composite `btree_gin` index the plan-of-record contemplated.
-
-**Verified:** 348 tests green (26 files), typecheck, lint and a production build
-clean. Security advisors show only the two documented intentional notices; no
-`function_search_path_mutable`, because both functions set `search_path`. The
-deployed definition was checked with `pg_get_functiondef` rather than against
-the migration file — it uses `chr(2)` and contains no `<mark>`. Migration
-filenames were taken from `list_migrations` *after* applying, which is the
-Phase 3 checkpoint's lesson.
-
-**Open after this feature:**
-
-- **A `rollback` inside an `execute_sql` batch rolls back the whole batch**, including statements before the explicit `begin`. An insert-then-measure script silently lost its insert and the next query read `rows=0`, which looked like a broken index. Seed and measure in separate calls.
-- **No test isolates the `messages` owner policy for this query.** The inner join means the `conversations` policy covers it too. Not a defect — but if the join is ever removed, the isolation test's discriminating power changes and this should be re-mutated.
-- `prompts_tags_idx` is still reported unused, unchanged from F25 and still on purpose.
-
-### 2026-08-08 — 25 Insert a prompt into the composer
-
-A library button in the composer toolbar opening an anchored popover: search
-field, keyboard-driven listbox, and insertion of the chosen body at the caret.
-
-**Decisions taken before any code, agreed with the user:**
-
-- **A new `GET /api/prompts`, read on the picker's first open.** F24 predicted this feature would reuse the `/prompts` page's server read and wrote that into the route file; the prediction was wrong and the comment is corrected in place rather than worked around. Reusing the page read would have meant shipping every prompt *body* — up to 10,000 characters each — in the RSC payload of every chat load, for a panel most loads never open.
-- **A module-level cache, invalidated inside F24's `usePromptMutation`.** `Chat` remounts per conversation, so component state would have made "once per session" mean "once per conversation".
-- **A vendored `popover.tsx`.** A `DropdownMenu` cannot hold a filter input: Radix menus own typing for their typeahead and arrows for item navigation. The popover claims neither, which leaves both to the listbox. No exit keyframe, per F05.
-- **The picker's search matches tags; `/prompts` still matches titles only.** Two rules, not two spellings — the page has a tag filter row and the picker has no room for one. Both behaviours are asserted in the same test file so the divergence is visible.
-
-**The Radix finding, which is F21's lesson in a new place.** Insertion worked
-first time — right body, right caret, popover closed — and focus was on the
-trigger button rather than the textarea. Radix returns focus to the trigger when
-a popover closes, and it does so *after* the composer's `requestAnimationFrame`
-call, so the composer's focus was set and then taken away. `onCloseAutoFocus` is
-the seam, the same one F21 used for the rename input. The yield is **conditional
-on an insertion having happened**: closing with Escape or a click outside must
-still hand focus back to the trigger, or a keyboard user who changes their mind
-is left on `<body>` with nothing to tab from. Both halves measured — insert ends
-on the textarea, Escape ends on the trigger.
-
-**`resize()` had to be extracted before any of this worked.** The textarea grew
-inside `handleChange`, which is the one path a programmatic `setText` does not
-take, so a twelve-line prompt would have landed in a one-row box. Measured after
-the fix: 40px → 112px with `scrollHeight === height`.
-
-**The cache was proven by breaking it.** With `invalidatePromptLibrary()`
-removed, a prompt created on `/prompts` and a client-side navigation back left
-the picker listing four prompts and not the fifth — the row was in the database
-and invisible to the panel, which is the staleness the invalidation exists to
-prevent. Restored, it appears at the top.
-
-**A harness lesson repeated from F24, having written it down and then done it
-again.** `getByRole('link', { name: 'New chat' })` is ambiguous in this sidebar —
-there is a "New chat" button *and* a conversation titled "New chat" — and with
-stderr suppressed the failed click read as a broken feature for several minutes.
-The navigation that works is the PromptX wordmark. Suppressing stderr on a
-command whose success is the thing being tested is now two features' worth of
-wasted time.
-
-**Mutation runs** (each turned red exactly the tests that claim it, then
-restored): dropping the tag arm from `searchPrompts` → the two tag tests, one of
-which also asserts `filterPrompts` still *does not* match tags; forcing
-`needsLeadingBreak` to false → four separator and caret tests.
-
-**Verified:** 337 tests green (25 files), typecheck, lint and a production build
-clean. In the browser: exactly **one** `GET /api/prompts` across three opens and
-a conversation switch, and a second only after a write invalidated it; filtering
-on `wri` returned two prompts whose titles contain no such string, matching their
-`writing` tag; ArrowDown moved `aria-activedescendant` and Enter inserted the
-second match; insertion at caret 6 of `before after` produced exactly one leading
-newline and no trailing one; a selection was replaced; the picker is disabled
-through a real stream (ten consecutive samples showing the stop button and the
-disabled trigger) and enabled after; the empty library shows its state and a link
-to `/prompts`. Five test rows were deleted from the live project afterwards.
-
-**Open after this feature:**
-
-- **The highlight follows the pointer on open.** If the cursor happens to rest over an option as the panel appears, that option is highlighted and Enter inserts it rather than the top match. Conventional combobox behaviour and not wrong, but a keyboard user who opened by mouse could be surprised. The usual fix is to ignore hover until the mouse actually moves; not built, because it is a papercut rather than a defect.
-- **A prompt written in another browser tab is invisible until reload.** Deliberate: the alternative is a poll or a subscription for a panel opened rarely.
-
-### 2026-08-08 — 24 Prompt library
-
-The `prompts` table has existed since F02 and nothing had ever written to it.
-This feature gave it CRUD, a page, and the sidebar link that makes the page
-reachable at all — plus F23's deferred "Save to library" shortcut.
-
-**Decisions taken before any code, agreed with the user:**
-
-- **No migration.** The table, its four owner policies, `prompts_user_id_idx` and `prompts_tags_idx` all shipped in F02. The one thing F02 did *not* give it is a trigger on `updated_at`, so the update statement writes it.
-- **`updated_at` is written on edit**, reversing what four conversation writes do. Same rule read correctly: order on activity, and editing a prompt is the only activity a prompt has. Held by a test that goes red when the column is dropped from the statement.
-- **Filtering is client-side over one server read.** No round trip per keystroke, no debounce; F25 wants the same array in client state anyway. F27's message search stays in the URL because it is a ranked query over thousands of rows — different scale, deliberately different mechanism.
-- **A sidebar nav block, not another account-menu item.** `project-overview.md` has said since Phase 0 that the sidebar holds Prompts, Search and Settings; the slot is built once and F27/F31 drop into it.
-- **`PATCH` takes one strict object, not a union of branches.** The union on `updateConversationSchema` exists because five separate intents converge on one row; a prompt has one intent and the dialog submits all three fields together.
-- **Chip tag input with suggestions**, because free text invites `deploy` and `deploys` as two tags that never match. A native `<datalist>` rather than a combobox primitive this codebase does not have — the F22 Dependencies gate.
-
-**The bug the browser found, and the unit suite structurally could not.**
-`PromptDialog` seeded its fields inside `handleOpenChange`, the arrangement F23
-settled for a dialog that owns its own trigger. It is wrong for a dialog a parent
-opens: **Radix calls `onOpenChange` only for changes it initiates** — a trigger,
-Escape, the overlay, the close button — and never when a parent flips the `open`
-prop. So the handler ran on every close and on no open at all. "New prompt"
-opened pre-filled with the last saved prompt, and saving wrote a byte-for-byte
-duplicate — same title, same body, same tags. Typecheck, lint and 320 tests were
-green throughout. The fix is structural rather than another handler: the library
-mounts the dialog only while it is open, so `useState` initialisers do the
-seeding and there is no event anyone can forget to fire. Confirmed both ways — a
-fresh "New prompt" now opens empty, and Edit opens on the row that was clicked.
-
-A second-order confirmation of the fix: `useId` now returns a different value per
-open (`_r_0_` → `_r_c_`), which broke a hardcoded selector mid-session. That is
-the remount, visible.
-
-**Two harness mistakes worth recording**, both mine rather than the product's.
-Suppressing `2>&1` on `playwright-cli fill` hid a `strict mode violation:
-getByLabel('Title') resolved to 2 elements`, so a fill silently did nothing and I
-read the resulting duplicate as a data bug for several minutes. And `>> nth=0`
-appended to a `getByRole(...)` string is not valid in this CLI — it fails with a
-CSS parse error. Drive with refs from the snapshot, and never hide stderr on a
-command whose success is the thing being tested.
-
-**Mutation runs** (each turned red exactly the test that claims it, then was
-restored):
-
-- Swapping `.overwrite()` and `.max(MAX_PROMPT_TAGS)` in `promptTagsSchema` → only "counts the cap against the deduplicated tags". `.overwrite()` is what makes this orderable at all: unlike `.transform()` it preserves the schema type, so `.max()` can still be chained after it. Read off the installed zod 4.4.3 `.d.cts`, not from memory.
-- Dropping `updated_at` from `updatePrompt()` → only "moves updated_at".
-- `return data !== null` → `return true` in `deletePrompt()` → both RLS no-op tests, which is the pair that stops the route answering 204 for someone else's prompt.
-
-**Verified:** 320 tests green (25 files), typecheck, lint, and a production build
-clean with `/prompts`, `/api/prompts` and `/api/prompts/[id]` registered. In the
-browser at 1440/800/360px: the grid is 3/2/1 columns, the sidebar nav is in the
-document twice at 360px with exactly one copy visible and **zero duplicate ids
-document-wide**, the delete confirmation is a real `alertdialog` with Cancel
-focused, search matches titles case-insensitively and does *not* match bodies,
-and the tag filter narrows and clears. Tags entered as `  Code  ` and `Writing`
-stored as `code` and `writing` — read back from the database, not the screen.
-F23's shortcut derived "Be a careful editor." from the first line, saved a real
-row, and mounted no second dialog. Card chips render transparent on a hairline
-over `canvas-soft`, avoiding the F15/F16 invisible-container trap. Three test
-rows were deleted from the live project afterwards.
-
-**Open after this feature:**
-
-- **The `<datalist>` dropdown is not themeable**, so the tag suggestions are the one surface in the app rendering in the browser's own chrome rather than `DESIGN.md`'s palette. A deliberate trade against ~200 lines of listbox; worth a look at F37.
-- **`prompts_tags_idx` is still unused**, and now on purpose rather than by omission: filtering happens in the browser, so nothing queries tags in SQL. It becomes correct to drop or to use depending on what F25 needs; not decided here.
-- **`use-conversation-mutation.ts` is still misfiled** under `components/sidebar/` — noted at F23 and untouched again, for the same reason.
+- **`websearch_to_tsquery` ANDs terms**, so `deployment rollback` finds only messages containing both. Correct semantics that the "No matches" copy does not explain, and two words is the likeliest way to meet it. Worth a sentence in that empty state.
+- **The prompt picker's highlight follows the pointer on open.** If the cursor rests over an option as the panel appears, Enter inserts that one rather than the top match. Conventional, but the usual fix is to ignore hover until the mouse moves.
+- **The tag input's `<datalist>` cannot be themed**, so its dropdown is the one surface rendering in browser chrome rather than the DESIGN.md palette. Revisit at F37.
+- **A prompt written in another browser tab is invisible until reload** — deliberate, since the alternative is polling for a rarely-opened panel.
+- **No test isolates the `messages` owner policy for search**, because the inner join to `conversations` means either policy alone suffices. Not a defect; re-mutate if that join is ever removed.
+- **Three strict-mode locator collisions in three features** during browser passes. The habit that works is taking refs from `playwright-cli snapshot`, not composing CSS and hoping it is unique.
+- Carried forward, unchanged: `auth_leaked_password_protection` is still disabled (decide at F38), and no migration has been proven to replay from an empty database.
 
 ## Phase 3 — Conversation craft *(compacted)*
 
