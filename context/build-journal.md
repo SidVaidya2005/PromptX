@@ -40,6 +40,54 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 4 — Prompt library and search
 
+### 2026-08-08 — 27 Search interface
+
+`/search` as a Server Component over `?q=`, results grouped by conversation,
+⌘K from anywhere, and the deep link that lands a click on the right message.
+Closes the feature work in Phase 4.
+
+**Decisions taken before any code, agreed with the user:** the target message
+travels as `?m=<uuid>` so `Chat` reuses F18's `jumpTo` and its highlight rather
+than a hash Next does not reliably honour after hydration; debounced navigation
+uses `router.replace`, because pushing each keystroke turns Back into a walk
+through `d`, `de`, `dep`; ⌘K navigates rather than opening a palette, which
+would have needed the `GET /api/search` F26 deliberately did not build and a
+second copy of the results UI; and F26's flat 30-result cap stays, with grouping
+making its limit visible and recorded rather than fixed.
+
+**Two gaps F18 left that only search exposes, both found by reading the code
+rather than by it breaking.** The outline rail lists prompts only, so nothing
+had ever needed an assistant message to be reachable:
+
+- **`AssistantMessage` had no anchor at all.** Half of all search results point at answers, so half of them would have navigated to the right conversation and left the reader at the top with no indication of where the match was. It now carries `outlineAnchorId(id)` and `scroll-mt-lg`, exactly as `UserMessage` does. Verified: 61 anchors on a 61-message thread, zero duplicate ids document-wide even at 360px with the drawer open, where the sidebar is in the document twice.
+- **`isHighlighted` never reached `AssistantMessage` either**, so landing on an answer in a long thread said nothing about which message was meant. It does now — but as a 2px `border-primary` **left indicator**, not the border `UserMessage` uses: DESIGN.md `message-assistant` is explicit that a response carries no fill and no border, and the left rule is the marker `outline-rail-item` already uses for "this is the one you mean". The transparent border is always present so highlighting cannot reflow the thread.
+
+**The security claim, verified end to end in a browser rather than argued.**
+A seeded assistant message containing `<img src=x onerror=alert(1)>` was
+searched for and rendered: the tag appears as **text**, and
+`document.querySelectorAll('section img').length` is **0**. Nothing was parsed
+as markup anywhere on the path from `ts_headline` to the screen, which is what
+F26's sentinels were chosen for and what `toSnippetSegments` turns into real
+`<mark>` elements.
+
+**Verified in the browser:** ⌘K from `/chat` and from `/prompts` both land on
+`/search` with the input focused; typing `deploy` then `ment` produced
+`?q=deployment` and **one** Back returned to `/prompts` rather than walking the
+keystrokes; clicking a result on a 61-message thread scrolled to `scrollTop
+7272` with the target at `top: 492`, in viewport, and stripped `?m=` from the
+URL; the highlight fired on arrival and settled back for both roles; all three
+empty states render distinct sentences. Mutation runs: collapsing
+`toSnippetSegments` to one unsplit segment turns four tests red, and sorting
+groups by size instead of by best hit turns exactly the ordering test red.
+
+**Verified:** 360 tests green (27 files), typecheck, lint and a production build
+clean. Test conversations were deleted from the live project afterwards.
+
+**Open after this feature:**
+
+- **`websearch_to_tsquery` ANDs terms**, so `deployment rollback` finds only messages containing both. Correct websearch semantics and not a defect, but the "No matches" copy does not explain it, and a user typing two words is the likeliest way to meet it.
+- **A third strict-mode locator collision** in the browser pass, after F24 and F25 recorded the same lesson. `section li a` matched two rows. The habit that actually works is taking refs from `playwright-cli snapshot`, not composing CSS and hoping it is unique.
+
 ### 2026-08-08 — 26 Full-text search backend
 
 `messages.search_vector` and `messages_search_idx` have existed since F02 and

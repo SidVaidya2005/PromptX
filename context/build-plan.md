@@ -622,6 +622,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Debounced navigation as the user types
 - Highlight markup rendered safely — only `<mark>` is permitted, never arbitrary HTML
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The target message travels as `?m=<uuid>`, read by the conversation page and consumed once.** `/chat/[id]` already awaits `searchParams`, so it passes the id into `Chat`, which runs the `jumpTo` F18 already owns — including its 1.2s highlight, so the message announces itself rather than merely being on screen. The param is stripped with `router.replace` after use, so a reload does not re-jump. A hash was the alternative and needs an effect anyway: Next does not reliably scroll to a target that hydrates after the transition, and it would arrive without the highlight
+- **Debounced navigation uses `router.replace`, never `push`.** Every intermediate query as a history entry makes Back walk `d`, `de`, `dep` — the classic version of this bug. Replace keeps the URL linkable while Back returns to wherever the user came from, which is what "the back button works" has to mean
+- **Assistant messages gain the scroll anchor they have never had.** Only `UserMessage` renders `outlineAnchorId`, because F18 only ever needed to jump to prompts. Search returns both roles, so without this half the results would have had nothing to scroll to
+- **⌘K navigates to `/search` rather than opening a command palette.** A palette cannot call `searchMessages()` from the browser, so it would need a `GET /api/search` that F26 deliberately did not build, and it would duplicate this page's UI. The listener is on `window` with `capture`, the F21 finding, so a Radix dismissal listener on `document` cannot swallow it
+- **Three empty states, not two.** §27 names "no query yet" and "no matches"; F26 supplies a third — a query of only stopwords, which is neither, and which reads as a broken search if collapsed into "no matches"
+- **F26's flat 30-result cap stays, and grouping makes its limit visible.** One conversation can occupy the page. Accepted and recorded rather than fixed: if a conversation genuinely holds the 30 best matches that is the true answer, and a per-conversation cap would re-migrate a function shipped two commits earlier while letting a worse match outrank a better one for being elsewhere
+- **Grouping is presentation, never re-ranking.** A group appears at the position of its best-ranked hit and hits within it stay in rank order
+
 ---
 
 ## Phase 5 — Attachments
