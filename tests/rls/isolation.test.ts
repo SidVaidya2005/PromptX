@@ -156,7 +156,7 @@ afterAll(async () => {
   // any, and the failure is reported as a generic delete error.
   await admin.storage
     .from('attachments')
-    .remove([`${alice?.id}/probe.txt`, `${bob?.id}/probe.txt`])
+    .remove([`${alice?.id}/probe.png`, `${bob?.id}/probe.png`])
 
   for (const actor of [alice, bob]) {
     if (actor?.id) await admin.auth.admin.deleteUser(actor.id)
@@ -424,11 +424,19 @@ describe('public share links', () => {
 
 describe('attachment storage', () => {
   it('keeps one user out of another’s object prefix', async () => {
-    const path = `${bob.id}/probe.txt`
+    const path = `${bob.id}/probe.png`
 
     const { error: uploadError } = await admin.storage
       .from('attachments')
-      .upload(path, new Blob(['bob private bytes']), { upsert: true })
+      // An allowed mime, and not incidentally. This fixture used to be a text
+      // blob, which uploaded fine while the bucket had no allowed_mime_types —
+      // F28 set them, and this line went red with `mime type
+      // application/octet-stream is not supported`. That failure is the bucket
+      // limit doing its job, so the fixture moved rather than the limit.
+      .upload(path, new Blob(['not really a png'], { type: 'image/png' }), {
+        upsert: true,
+        contentType: 'image/png',
+      })
 
     expect(uploadError).toBeNull()
 
@@ -446,6 +454,6 @@ describe('attachment storage', () => {
       .from('attachments')
       .list(bob.id)
 
-    expect(listed?.map((entry) => entry.name)).toContain('probe.txt')
+    expect(listed?.map((entry) => entry.name)).toContain('probe.png')
   })
 })
