@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import { SaveToLibrary } from '@/components/chat/SaveToLibrary'
 
 type SystemPromptControlProps = {
   /** Null means the provider's own default. Not an empty string — see below. */
@@ -141,6 +142,8 @@ export function SystemPromptControl({
             )}
           />
         </label>
+
+        <SaveToLibrary body={draft} />
 
         <div className="flex items-center justify-between gap-sm">
           <p className="text-caption text-mute">
