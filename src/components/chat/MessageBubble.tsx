@@ -83,6 +83,12 @@ export function MessageBubble({
     <AssistantMessage
       id={message.id}
       text={text}
+      // Reaches an assistant message for the first time at F27. F18 introduced
+      // this for the outline rail, which lists prompts only, so a response
+      // never needed it — until search started returning both roles and
+      // landing on an answer in a 60-message thread with nothing to say which
+      // one was meant. (F27)
+      isHighlighted={isHighlighted}
       failed={message.metadata?.status === 'error'}
       errorMessage={message.metadata?.errorMessage ?? null}
       isStreaming={isStreaming}

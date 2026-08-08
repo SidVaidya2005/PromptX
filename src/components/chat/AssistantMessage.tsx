@@ -1,3 +1,4 @@
+import { outlineAnchorId } from '@/lib/outline'
 import { cn } from '@/lib/utils'
 
 import { CopyButton } from '@/components/chat/CopyButton'
@@ -25,6 +26,8 @@ type AssistantMessageProps = {
   sharedKeyAvailable: boolean
   /** True only on the newest assistant message, once it has settled. */
   canRegenerate: boolean
+  /** Briefly true after a jump, so the message says which one was meant. (F27) */
+  isHighlighted: boolean
   onRegenerate: (id: string, model?: { provider: Provider; modelId: string }) => void
 }
 
@@ -53,10 +56,32 @@ export function AssistantMessage({
   remaining,
   sharedKeyAvailable,
   canRegenerate,
+  isHighlighted,
   onRegenerate,
 }: AssistantMessageProps) {
   return (
-    <div className="group flex flex-col">
+    // The anchor F18 only ever needed on prompts. The outline rail lists user
+    // messages, so an assistant message never had a scroll target — until F27,
+    // where search returns both roles and half the results would otherwise have
+    // had nowhere to jump to. `scroll-mt-lg` keeps the landing off the very top
+    // edge, matching `UserMessage`.
+    <div
+      id={outlineAnchorId(id)}
+      className={cn(
+        'group flex scroll-mt-lg flex-col',
+        // A left indicator rather than the border UserMessage uses. DESIGN.md
+        // `message-assistant` is explicit that a response carries no fill and
+        // no border — "responses are the content, not a card" — so bordering it
+        // would contradict the system. The 2px primary rule is the same marker
+        // `outline-rail-item` already uses for "this is the one you mean".
+        //
+        // The transparent border is always present so highlighting cannot
+        // reflow the thread: without it the text would jump sideways for 1.2
+        // seconds and settle back.
+        'border-l-2 border-transparent pl-lg transition-colors',
+        isHighlighted && 'border-primary',
+      )}
+    >
       <div
         className={cn(
           'w-full py-lg text-body-md text-body-strong',
