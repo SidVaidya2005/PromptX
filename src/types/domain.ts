@@ -129,7 +129,7 @@ export type RenderedAttachment = {
  */
 export type ConversationSummary = Pick<
   Conversation,
-  'id' | 'title' | 'pinned_at' | 'archived_at' | 'updated_at'
+  'id' | 'title' | 'pinned_at' | 'archived_at' | 'updated_at' | 'share_slug'
 >
 
 /** A recency bucket in the sidebar. Empty buckets are never constructed. */

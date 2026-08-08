@@ -1,6 +1,7 @@
 import 'server-only'
 
-import { DEFAULT_CONVERSATION_TITLE } from '@/lib/constants'
+import { DEFAULT_CONVERSATION_TITLE, SHARE_SLUG_MAX_RETRIES } from '@/lib/constants'
+import { generateShareSlug } from '@/lib/share'
 
 import { createServerSupabaseClient } from '@/server/supabase'
 
@@ -32,7 +33,12 @@ export async function listConversations(
 
   const query = supabase
     .from('conversations')
-    .select('id, title, pinned_at, archived_at, updated_at')
+    // `share_slug` rather than a derived boolean, and it is twelve characters
+    // against the rule this select follows. The sidebar only needs to know
+    // *whether* a row is shared — but the value is the owner's own, the chip is
+    // the only place that would compute the boolean, and a column the row
+    // already has beats a second name for the same fact. (F33)
+    .select('id, title, pinned_at, archived_at, updated_at, share_slug')
     .order('pinned_at', { ascending: false, nullsFirst: false })
     .order('updated_at', { ascending: false })
 
@@ -346,6 +352,94 @@ export async function setConversationArchived(
   if (error) {
     console.error('[data/conversations] setConversationArchived failed', error)
     throw new Error('Failed to archive conversation')
+  }
+
+  return data !== null
+}
+
+/**
+ * Mints a public link for a conversation, or returns the one it already has. (F33)
+ *
+ * **Already-shared returns the existing slug and writes nothing.** `{shared:
+ * true}` is desired state, like the pin and the archive above it, so a second
+ * click must not break a URL the owner has already pasted somewhere. Only
+ * revoke-then-share mints a new one, which is what makes "a revoked URL is never
+ * reinstated" true: the old slug is gone from the row, so nothing can bring it
+ * back.
+ *
+ * `shared_at` moves with the slug because they are one fact. The slug is the
+ * state — the column comment has said so since F02 — and the timestamp is when
+ * it started.
+ *
+ * **The retry is bounded, and it is not a formality.** `share_slug` is `unique`,
+ * so a collision is a real `23505` rather than a hypothetical one; at ~71 bits it
+ * will not happen, and an unbounded loop against a bug that made the generator
+ * constant would spin forever instead of failing. Giving up after
+ * `SHARE_SLUG_MAX_RETRIES` turns that into an error somebody can see.
+ *
+ * Returns null when no row matched — RLS makes someone else's conversation
+ * invisible rather than forbidden, the distinction every write in this file
+ * makes. `updated_at` is left alone: sharing is not activity.
+ */
+export async function shareConversation(id: string): Promise<string | null> {
+  const supabase = await createServerSupabaseClient()
+
+  const existing = await getConversation(id)
+  if (!existing) return null
+  if (existing.share_slug) return existing.share_slug
+
+  for (let attempt = 0; attempt < SHARE_SLUG_MAX_RETRIES; attempt += 1) {
+    const slug = generateShareSlug()
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .update({ share_slug: slug, shared_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('share_slug')
+      .maybeSingle()
+
+    // 23505 is a unique violation, and the ONLY error worth another attempt.
+    // Anything else is a fault rather than a collision, and retrying it would
+    // turn one failure into three.
+    if (error?.code === '23505') continue
+
+    if (error) {
+      console.error('[data/conversations] shareConversation failed', error)
+      throw new Error('Failed to share conversation')
+    }
+
+    return data?.share_slug ?? null
+  }
+
+  // Never a non-random fallback. A predictable slug is a public conversation
+  // somebody can find without the link, which is the one outcome worse than
+  // failing the request.
+  console.error('[data/conversations] shareConversation exhausted slug attempts', { id })
+  throw new Error('Failed to share conversation')
+}
+
+/**
+ * Revokes a public link. (F33)
+ *
+ * Nulls both columns, and the old URL stops working on the very next request —
+ * not because anything is invalidated, but because the anon policy reads
+ * `share_slug is not null` and there is now nothing to match. That is the whole
+ * argument for the slug being the state rather than a boolean beside it: there
+ * is no second flag to forget, and no cache in between.
+ */
+export async function unshareConversation(id: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update({ share_slug: null, shared_at: null })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('[data/conversations] unshareConversation failed', error)
+    throw new Error('Failed to revoke the share link')
   }
 
   return data !== null

@@ -46,6 +46,41 @@ export async function createServerSupabaseClient() {
 }
 
 /**
+ * The signed-out client, for `/share/[slug]` and nothing else. (F33)
+ *
+ * **This is weaker than the cookie-bound client, not stronger.** It carries the
+ * same publishable key and no session at all, so PostgREST resolves the role to
+ * `anon` and only the `anon` policies apply — which for this project means
+ * exactly the three share policies: a conversation with a non-null `share_slug`,
+ * its messages, and their attachment metadata. Nothing else in the schema has an
+ * `anon` policy, so nothing else is reachable through it.
+ *
+ * **Why the cookie-bound client will not do**, which is the part worth reading
+ * before anyone tries to simplify this away: F03's share policies are
+ * `for select to anon`, and Postgres applies a policy only when the current role
+ * matches. Supabase resolves a signed-in JWT to `authenticated`, so the
+ * cookie-bound client returns **nothing** for a signed-in visitor opening
+ * someone else's share link — which is the ordinary case, since a link is
+ * usually passed between two people who both use the product. Reading through
+ * this client makes every visitor identical.
+ *
+ * **And why the policies were not simply widened to `to anon, authenticated`:**
+ * `listConversations()` carries no `user_id` filter on purpose, because RLS is
+ * the boundary rather than the query. An `authenticated` policy of
+ * `using (share_slug is not null)` would therefore put every shared conversation
+ * in the system into every user's sidebar. The narrower client is the safe half
+ * of that trade.
+ *
+ * No session handling, for the same reason the service-role client has none:
+ * there is no user here to have one.
+ */
+export function createAnonSupabaseClient() {
+  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+}
+
+/**
  * Bypasses RLS. Permitted ONLY in src/server/quota.ts, for shared_key_budget.
  * Every other call site is a bug.
  *

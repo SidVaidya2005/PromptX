@@ -19,6 +19,10 @@ function conversation(
     pinned_at: null,
     archived_at: null,
     updated_at: NOW.toISOString(),
+    // Unshared by default. Grouping ignores it entirely — sharing is a chip on
+    // the row, never a bucket — so every case here describes the same situation
+    // it did before F33 added the column. (F33)
+    share_slug: null,
     ...overrides,
   }
 }
