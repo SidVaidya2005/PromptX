@@ -1,5 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 
 import {
   SHARED_KEY_INPUT_USD_PER_MILLION,
@@ -18,6 +26,7 @@ import { createServerSupabaseClient } from '@/server/supabase'
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * Only the cookie-bound half is replaced; `createServiceRoleClient` stays real,
@@ -44,9 +53,11 @@ vi.mock('@/server/supabase', async (importOriginal) => ({
  * **`shared_key_budget` is a SINGLETON ROW SHARED BY THE WHOLE PROJECT.** There
  * is no local stack (F02), so every write below lands on the same row the
  * running application reads — this is the developer's own ledger, not a fixture.
- * The row is therefore snapshotted in `beforeAll` and restored in `afterAll`,
- * and that is not tidiness: without it a run of this suite would leave the
- * shared key tripped for real, and the previous month's totals gone.
+ * The row is therefore snapshotted in `beforeAll` and restored after **every
+ * test**, and that is not tidiness: without it a run of this suite would leave
+ * the shared key tripped for real, and the previous month's totals gone. See
+ * `restoreSnapshot` below for why per-test rather than per-suite, and for the
+ * residual that remains.
  */
 
 const SUPABASE_URL = requiredEnv('NEXT_PUBLIC_SUPABASE_URL')
@@ -58,7 +69,7 @@ const admin = createClient<Database>(SUPABASE_URL, SECRET_KEY, {
 
 type Budget = Database['public']['Tables']['shared_key_budget']['Row']
 
-let snapshot: Budget
+let snapshot: Budget | undefined
 
 /** The first of the current UTC month, which is what period_month stores. */
 function thisMonth(): string {
@@ -102,14 +113,14 @@ const OVER_CEILING_INPUT_TOKENS = Math.ceil(
   ((SHARED_KEY_MONTHLY_USD_CEILING + 1) * 1_000_000) / SHARED_KEY_INPUT_USD_PER_MILLION,
 )
 
-beforeAll(async () => {
-  snapshot = await readBudget()
-})
+/**
+ * Column by column rather than spreading the row, so `id` is never in the patch
+ * — it carries a check constraint pinning it to 1, and this suite has no
+ * business writing it back.
+ */
+async function restoreSnapshot(): Promise<void> {
+  if (!snapshot) return
 
-afterAll(async () => {
-  // Column by column rather than spreading the row, so `id` is never in the
-  // patch — it carries a check constraint pinning it to 1, and this suite has
-  // no business writing it back.
   await setBudget({
     period_month: snapshot.period_month,
     input_tokens: snapshot.input_tokens,
@@ -117,7 +128,42 @@ afterAll(async () => {
     estimated_usd: snapshot.estimated_usd,
     tripped_at: snapshot.tripped_at,
   })
+}
+
+/**
+ * An abort between the snapshot and the restore leaves the shared key genuinely
+ * tripped for real users — which is not a prediction: a network fault did it at
+ * F19 and the row sat at `estimated_usd = 11.0000` until it was repaired by
+ * hand. There is no local stack to isolate against, so the exposure cannot be
+ * removed; it can only be made short and hard to escape.
+ *
+ * `afterEach` shrinks the window from the length of the suite to the length of
+ * one test, and the signal handlers cover the other way out — Ctrl-C, an
+ * unhandled rejection, a worker torn down mid-run. `process.once` rather than
+ * `on`, so a second signal during the repair still kills the process rather than
+ * queueing another write.
+ *
+ * **The residual is real and stays on the record:** a fault *during* the restore
+ * call itself still leaves the row wrong, and no arrangement of hooks fixes
+ * that. Only a local stack would, which is F02's open consequence.
+ */
+const REPAIR_SIGNALS = ['SIGINT', 'SIGTERM', 'uncaughtException'] as const
+
+for (const event of REPAIR_SIGNALS) {
+  process.once(event, () => {
+    void restoreSnapshot().finally(() => {
+      process.exit(1)
+    })
+  })
+}
+
+beforeAll(async () => {
+  snapshot = await readBudget()
 })
+
+afterEach(restoreSnapshot)
+
+afterAll(restoreSnapshot)
 
 beforeEach(async () => {
   await setBudget({
@@ -129,7 +175,7 @@ beforeEach(async () => {
   })
 })
 
-describe('isSharedKeyAvailable', () => {
+describeHosted('isSharedKeyAvailable', () => {
   it('serves while the month is under its ceiling', async () => {
     expect(await isSharedKeyAvailable()).toBe(true)
   })
@@ -156,7 +202,7 @@ describe('isSharedKeyAvailable', () => {
   })
 })
 
-describe('recordSharedBudgetTokens', () => {
+describeHosted('recordSharedBudgetTokens', () => {
   it('accumulates measured tokens exactly', async () => {
     await recordSharedBudgetTokens({ inputTokens: 300, outputTokens: 8 })
     await recordSharedBudgetTokens({ inputTokens: 120, outputTokens: 40 })
@@ -230,7 +276,7 @@ describe('recordSharedBudgetTokens', () => {
   })
 })
 
-describe('the ceiling', () => {
+describeHosted('the ceiling', () => {
   it('leaves the breaker alone while spend is under it', async () => {
     await recordSharedBudgetTokens({ inputTokens: 1_000, outputTokens: 100 })
 
@@ -257,7 +303,7 @@ describe('the ceiling', () => {
   })
 })
 
-describe('the breaker comes first', () => {
+describeHosted('the breaker comes first', () => {
   /**
    * The stand-in for the cookie-bound client. Typed locally and cast once at the
    * seam, because only `.rpc` is reached and building a faithful SupabaseClient
@@ -300,7 +346,7 @@ describe('the breaker comes first', () => {
   })
 })
 
-describe('the accounting month rolling over', () => {
+describeHosted('the accounting month rolling over', () => {
   it('starts the totals again and clears the trip on the first write of a new month', async () => {
     await setBudget({
       period_month: lastMonth(),
