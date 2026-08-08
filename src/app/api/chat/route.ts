@@ -36,13 +36,8 @@ import {
   getMessage,
   listByConversation,
 } from '@/server/data/messages'
-import { MissingKeyError, resolveModel, UnknownModelError } from '@/server/providers'
-import {
-  BudgetExhaustedError,
-  QuotaExceededError,
-  recordSharedKeyTokens,
-  releaseSharedSlot,
-} from '@/server/quota'
+import { modelErrorPayload, resolveModel } from '@/server/providers'
+import { recordSharedKeyTokens, releaseSharedSlot } from '@/server/quota'
 
 import type { Attachment, Message } from '@/types/domain'
 
@@ -339,46 +334,15 @@ export async function POST(request: Request) {
   try {
     ;({ model, usedSharedKey } = await resolveModel(user.id, provider, modelId))
   } catch (error) {
-    if (error instanceof MissingKeyError) {
-      return NextResponse.json(
-        { error: `No API key configured for ${error.provider}`, code: 'missing_key' },
-        { status: 400 },
-      )
-    }
-
-    if (error instanceof BudgetExhaustedError) {
-      // 503, not 429: nothing this person does changes the answer, so a status
-      // meaning "you have had your share" would be wrong. Checked before the
-      // reservation, so a refusal here has not touched their daily allowance
-      // either — and like every refusal above it, nothing has been written.
-      return NextResponse.json(
-        { error: error.message, code: 'budget_exhausted' },
-        { status: 503 },
-      )
-    }
-
-    if (error instanceof QuotaExceededError) {
-      // Before the generic arm below, or a refusal the application makes on
-      // purpose would be reported as a fault it did not intend. Nothing was
-      // written: resolveModel claims the slot before this handler persists
-      // anything, so the thread is exactly as the user left it.
-      return NextResponse.json(
-        { error: error.message, code: 'quota_exceeded' },
-        { status: 429 },
-      )
-    }
-
-    if (error instanceof UnknownModelError) {
-      // The error's own message, unlike the branch above — it already
-      // distinguishes "no such model" from "PromptX ships none for this
-      // provider yet", and rebuilding that distinction here would put the same
-      // rule in two files. It names a provider and a model id the client just
-      // sent us, so there is nothing in it that is not already theirs.
-      return NextResponse.json(
-        { error: error.message, code: 'unknown_model' },
-        { status: 400 },
-      )
-    }
+    // Every one of these refusals leaves the database exactly as it found it —
+    // resolveModel() claims the slot before this handler persists anything, so
+    // the thread is as the user left it whichever arm answers. The mapping
+    // itself moved into providers.ts at F31, where /api/compare reads the same
+    // one: a missing key, a spent allowance and a tripped breaker mean the same
+    // thing wherever they are raised, and two copies would be two routes free
+    // to disagree about what a 429 is.
+    const refusal = modelErrorPayload(error)
+    if (refusal) return NextResponse.json(refusal.body, { status: refusal.status })
 
     console.error('[api/chat] could not resolve a model', error)
     return NextResponse.json(
