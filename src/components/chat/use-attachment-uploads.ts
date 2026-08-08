@@ -90,6 +90,22 @@ export function useAttachmentUploads({
    */
   const itemsRef = useRef<PendingAttachment[]>([])
 
+  /**
+   * One abort controller per in-flight upload.
+   *
+   * Without these, removing a chip mid-upload deleted nothing: the row does not
+   * exist on the item until the confirm call returns, so `remove` had no id to
+   * delete, and the upload carried on to leave a `ready` row that no chip
+   * referenced — an orphan for the reaper a day later. Both ways of reaching it
+   * are ordinary: the X is live during an upload, and confirming a model switch
+   * removes whatever the new model cannot read, in flight or not.
+   *
+   * Aborting is enough to clean up, because `uploadAttachment` already deletes
+   * what it created when it throws. That signal has existed since F29 and was
+   * simply never connected. (Phase 5 checkpoint)
+   */
+  const inFlight = useRef(new Map<string, AbortController>())
+
   const update = useCallback(
     (localId: string, patch: Partial<PendingAttachment>) => {
       setState((current) => ({
@@ -104,9 +120,13 @@ export function useAttachmentUploads({
 
   const start = useCallback(
     async (localId: string, file: File) => {
+      const controller = new AbortController()
+      inFlight.current.set(localId, controller)
+
       try {
         const attachment = await uploadAttachment(file, {
           onProgress: (progress) => update(localId, { progress }),
+          signal: controller.signal,
         })
 
         update(localId, { status: 'ready', progress: 1, attachment })
@@ -119,7 +139,12 @@ export function useAttachmentUploads({
         // status would be a state no code consults — bookkeeping pretending to
         // be a state machine. What the user needs is this chip saying so and
         // offering another go, which is local by nature.
+        // A removed chip is not a failed one. `update` maps over the items and
+        // finds nothing, so this is already a no-op for an aborted upload —
+        // stated rather than relied on quietly.
         update(localId, { status: 'failed', progress: 0 })
+      } finally {
+        inFlight.current.delete(localId)
       }
     },
     [update],
@@ -229,7 +254,12 @@ export function useAttachmentUploads({
     const item = itemsRef.current.find((candidate) => candidate.localId === localId)
 
     if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl)
+
+    // Ready: the row exists and this is the only thing that will delete it.
+    // Still uploading: there is no id here yet, so aborting is what cleans up —
+    // `uploadAttachment` deletes its own draft when it throws.
     if (item?.attachment) void deleteAttachment(item.attachment.id)
+    inFlight.current.get(localId)?.abort()
 
     files.current.delete(localId)
     started.current.delete(localId)
@@ -269,6 +299,9 @@ export function useAttachmentUploads({
 
     files.current.clear()
     started.current.clear()
+    // Nothing should be in flight here — an unfinished upload blocks the send —
+    // but clearing the map keeps a stale controller from outliving its chip.
+    inFlight.current.clear()
     setState({ items: [], error: null })
   }, [])
 

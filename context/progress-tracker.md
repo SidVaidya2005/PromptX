@@ -17,10 +17,10 @@ progress, and what is next.
 
 ## Current Status
 
-**Phase:** Phase 5 — Attachments complete; the phase checkpoint is next
-**Last completed:** 30 Capability gating. `acceptedMimeTypes()` in `src/lib/models.ts` is the one definition of what a model reads, and four surfaces consume it: the attach button (`aria-disabled`, so the tooltip explaining *why* can actually open), the file input's `accept`, the warning before a model switch drops files, and `/api/chat`'s own refusal. **The catalog gained two models so the gate has something to refuse** — `deepseek/deepseek-v4-flash` reads nothing and `meta-llama/llama-4-maverick` reads images but not PDFs, both listed from OpenRouter's `input_modalities` and proven by real sends. Measured: dropping a PDF on the images-only model is refused by name; switching with one image and one PDF attached names **1 file**, and confirming deletes that row and its object while the image's row and all three objects survive; a crafted request gets `400 attachment_unsupported` for a PDF at either restricted model, `200` for an image at the images-only one, and `unknown_model` for a bogus id — with the refusals writing nothing. History is filtered rather than refused, so a thread containing an image still answers on the text-only model, which said plainly it could not see it. 389 tests, typecheck, lint and a production build green
-**Previously completed:** 29 Attachment interface — the paperclip, chips with real progress, the lightbox, and file parts inlined for every turn
-**Next:** the Phase 5 checkpoint — run the verification commands, inspect the F28–F30 diff for consistency, check the advisors, then promote Phase 5's still-binding rules into `constraints.md` and compact `build-journal.md`
+**Phase:** Phase 5 closed — Phase 6 (Compare, share, export) is next
+**Last completed:** Phase 5 checkpoint — 389 tests, typecheck, lint and a production build green; advisors show only the three documented pre-existing notices and nothing new from this phase. The phase diff is 39 files and ~3,900 insertions across F28–F30, read for consistency: all three new routes authenticate before parsing and carry an `internal_error` catch, no `.eq('user_id')` stands in for RLS, no raw hex or named width utility reached a component, nothing is hover-revealed, both new server modules carry `server-only`, and no TODO or `console.log` survived. **One real defect found and fixed:** removing a chip mid-upload deleted nothing server-side — the row does not exist on the item until the confirm call returns, so the upload ran to completion and left a `ready` orphan no chip referenced, for both the remove control and a confirmed model switch. The `signal` `uploadAttachment` has accepted since F29 was simply never connected; reproduced by mutation, where removing at 61% left a row and three objects behind. F28's open item is also closed: `cron.job_run_details` and `net._http_response` show the hourly reaper firing on schedule at 07:00 and 08:00 and returning a real body. Phase 5's rules were promoted into `constraints.md` under a new **Attachments** topic, and `build-journal.md` collapsed from 243 lines to 188. Seven follow-ups recorded, none blocking
+**Previously completed:** 28–30 — the upload pipeline, the attachment interface, and capability gating
+**Next:** Phase 6 — Compare, share, export, opening with 31 Compare view: two models streaming side by side from one prompt, quota-checked independently, persisting nothing except the ledgers
 
 ---
 
@@ -78,7 +78,7 @@ progress, and what is next.
 - [x] 28 Upload pipeline
 - [x] 29 Attachment interface
 - [x] 30 Capability gating
-- [ ] Phase checkpoint — verify Phase 5 — Attachments is stable before starting the next phase
+- [x] Phase checkpoint — verify Phase 5 — Attachments is stable before starting the next phase
 
 ### Phase 6 — Compare, share, export
 
