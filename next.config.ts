@@ -18,6 +18,26 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'lh3.googleusercontent.com', pathname: '/**' },
     ],
   },
+  /**
+   * The other half of "a revoked share link stops working immediately". (F33)
+   *
+   * `/share/[slug]/page.tsx` exports `dynamic = 'force-dynamic'`, which stops
+   * Next from generating or revalidating a copy. That says nothing to anything
+   * *downstream* — a CDN or a browser is free to keep serving what it was handed
+   * — and revocation is exactly the case where a cached copy defeats the whole
+   * mechanism. Both are required; neither substitutes for the other.
+   *
+   * `private` as well as `no-store`, belt and braces: the first forbids a shared
+   * cache from holding it at all, the second forbids any cache from storing it.
+   */
+  async headers() {
+    return [
+      {
+        source: '/share/:slug*',
+        headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
+      },
+    ]
+  },
 }
 
 export default nextConfig
