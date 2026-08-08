@@ -597,6 +597,15 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Results capped at `SEARCH_RESULT_LIMIT`
 - Vitest against a seeded set of 5,000 messages asserting sub-500ms response and correct ordering
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The snippet carries no HTML, and `StartSel`/`StopSel` are control-character sentinels rather than `<mark>`.** `ts_headline` does not escape the document it summarises — measured against this project before deciding: `<script>` was stripped but `<img src=x onerror=alert(2)>` came through verbatim, and fragment selection cut another tag in half leaving `onerror=alert(1)>`. F27 splits on the sentinels into real React elements, so nothing downstream ever holds a string it might pass to `dangerouslySetInnerHTML` and §27's "only `<mark>` is permitted" is true by construction rather than by rule. `library-docs.md`'s snippet is amended in place with the finding
+- **The 5,000-message suite asserts correctness; the speed claim is measured with `EXPLAIN ANALYZE` and recorded rather than asserted.** There is no local stack, so a wall-clock assertion runs from a laptop to ap-southeast-1 and measures the network — green with a bad plan on a fast connection, red with a good one on a slow connection. F16 established what a test that cannot fail is worth; the honest instrument here is the planner's own timing plus confirmation that `messages_search_idx` is used
+- **"No searchable terms" and "no matches" are different answers.** A stopword-only query parses to an empty `tsquery`, which is detectable in SQL; a second tiny function reports it, called only when the result set is empty. That keeps `search_messages` the shape `library-docs.md` documents and puts the extra round trip on the path that was already a dead end
+- **Ordering is `ts_rank desc, created_at desc, id desc`.** Rank leads because §26 says so; the tiebreakers make the order total, which matters more here than in F19 — ranks collide far more often than timestamps do
+- **No new index unless `EXPLAIN` demands one.** `messages_search_idx` is a plain GIN on `search_vector` and RLS adds a `user_id` predicate it cannot serve. At this scale that is speculation, so the plan decides and the finding is recorded either way
+- **Conversation titles are not searchable.** `search_vector` covers `messages.content` only; a conversation is found by the messages in it. Archived conversations *are* searchable, which F22 states outright and a test pins
+
 ### 27 Search interface
 
 **UI:**

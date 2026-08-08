@@ -243,7 +243,9 @@ import 'server-only'
 import { createServerSupabaseClient } from '@/server/supabase'
 import { SEARCH_RESULT_LIMIT } from '@/lib/constants'
 
-export async function searchMessages(query: string) {
+export async function searchMessages(query: string): Promise<SearchOutcome> {
+  if (query.trim() === '') return { status: 'no_terms' }
+
   const supabase = await createServerSupabaseClient()
 
   // RLS restricts the scan to the caller's rows. No user_id filter needed —
@@ -256,7 +258,16 @@ export async function searchMessages(query: string) {
     throw new Error('Search failed')
   }
 
-  return data ?? []
+  const results = data ?? []
+  if (results.length > 0) return { status: 'ok', results }
+
+  // Zero rows has two causes that need different words on screen. A query of
+  // only stopwords parses to an EMPTY tsquery and could never have matched;
+  // `search_has_terms` is what tells them apart, and it is asked only here, on
+  // the path that was already a dead end. (F26)
+  const { data: hasTerms } = await supabase.rpc('search_has_terms', { query })
+
+  return hasTerms ? { status: 'ok', results } : { status: 'no_terms' }
 }
 ```
 
@@ -285,17 +296,42 @@ as $$
     m.conversation_id,
     c.title,
     m.role,
+    -- NOT StartSel=<mark>. See the warning below this block. (F26)
     ts_headline('english', m.content, websearch_to_tsquery('english', query),
-                'StartSel=<mark>, StopSel=</mark>, MaxFragments=2'),
+                'StartSel=' || chr(2) || ', StopSel=' || chr(3) || ', MaxFragments=2'),
     ts_rank(m.search_vector, websearch_to_tsquery('english', query)),
     m.created_at
   from messages m
   join conversations c on c.id = m.conversation_id
   where m.search_vector @@ websearch_to_tsquery('english', query)
-  order by ts_rank(m.search_vector, websearch_to_tsquery('english', query)) desc
+  order by ts_rank(m.search_vector, websearch_to_tsquery('english', query)) desc,
+           m.created_at desc, m.id desc     -- total, or the order is unstable
   limit result_limit;
 $$;
 ```
+
+**`ts_headline` does not escape the document it summarises, so the snippet must
+never be treated as HTML.** This was measured against the project's own database
+before feature 26 was written, and it is not what the option names suggest:
+
+```
+ts_headline over 'An <img src=x onerror=alert(2)> tag ... searchable ...'
+  -> 'onerror=alert(2)> tag sits inside <mark>searchable</mark> content'
+```
+
+Two problems in one line. The `img` tag came through intact — and message
+content is model output and user input, so a snippet rendered with
+`dangerouslySetInnerHTML` would execute whatever somebody put in a message. And
+fragment selection cut the tag in half, so even a sanitiser would be handed
+markup that was never well formed.
+
+So the delimiters here are `chr(2)` and `chr(3)` — STX and ETX, which cannot
+occur in prose, mean nothing to a browser, and survive JSON encoding as
+`\u0002` / `\u0003`. The snippet is plain text by construction and feature 27
+splits on them to emit real React elements. That turns "only `<mark>` is
+permitted, never arbitrary HTML" from a rule someone has to remember into a fact
+about the data. The two values are named in `src/lib/constants.ts` as
+`SEARCH_MATCH_START` / `SEARCH_MATCH_END`.
 
 ### Atomic quota reservation
 

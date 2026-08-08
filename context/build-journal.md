@@ -40,6 +40,69 @@ At that phase's checkpoint, the whole phase collapses to:
 
 ## Phase 4 — Prompt library and search
 
+### 2026-08-08 — 26 Full-text search backend
+
+`messages.search_vector` and `messages_search_idx` have existed since F02 and
+nothing had ever queried them. Two migrations —
+`20260808024702_search_messages` and its grants — plus `searchMessages()` and an
+eleven-test suite over 5,000 seeded messages.
+
+**Two facts were measured against the database before any code was written**,
+and both changed the design:
+
+- **`ts_headline` does not escape the document it summarises.** `<script>` was stripped but `<img src=x onerror=alert(2)>` came through verbatim, and fragment selection cut another tag in half leaving `onerror=alert(1)>`. Message content is model output and user input, so a snippet rendered as HTML would execute whatever someone put in a message. `StartSel`/`StopSel` are therefore `chr(2)`/`chr(3)` — verified to survive `ts_headline` and JSON encoding — and F27 splits on them into React elements. §27's "only `<mark>` is permitted" becomes a fact about the data rather than a rule to follow. `library-docs.md`'s snippet is amended in place with the finding.
+- **A stopword-only query parses to an empty `tsquery`**, which is detectable in SQL. So `searchMessages()` returns an outcome union and `search_has_terms` distinguishes "try different words" from "nothing here" — asked only when the result set is empty.
+
+**The mutation run found a test that could not fail, and it was not the test I
+predicted.** Weakening `messages`'s owner-read policy to `using (true)` left the
+whole suite **green**. The reason is structural: `search_messages` inner-joins
+`conversations`, whose own owner policy hides the stranger's conversation, so
+the row is dropped by the join whichever policy is weakened. Either policy alone
+is sufficient here — real defence in depth, but it means no test can single out
+the messages policy, and the comment claiming it did was wrong.
+
+Weakening **both** then turned exactly one test red — and it was *"finds nothing
+at all for a user with no messages"*, not the isolation test. The isolation
+assertion looked for the stranger's wording inside the snippet, and
+`ts_headline` returns a **fragment**: the leading words of a short message are
+routinely cut, so the substring was absent whether or not the row was there. It
+could never have failed. Rewritten to assert on `conversation_title`, which
+comes off the row rather than out of the headline, the same mutation turns
+**two** tests red. Both policies were restored and verified with
+`pg_get_expr(polqual, …)` immediately.
+
+**The performance claim, measured rather than asserted.** §26 asked for a
+sub-500ms wall-clock assertion; from this laptop to ap-southeast-1 that measures
+the network, so the suite asserts correctness and `EXPLAIN ANALYZE` answers the
+speed question. Over 5,001 messages with RLS active:
+
+| query | matches | execution |
+| --- | --- | --- |
+| `deployment pipeline` (common) | 1,000 | 49.6 ms through the function, 3.4 ms for the body |
+| `zylophone` (rare) | 1 | 16.8 ms through the function |
+
+**`messages_search_idx` is not used at this size, and that is correct.** The
+planner chose a sequential scan for both the 20%-selectivity term and the
+one-row term — the table is ~142 buffers, so scanning it beats a GIN scan plus
+heap fetches. Forcing `enable_seqscan = off` made it pick `messages_user_id_idx`
+(the RLS column), still not the GIN. So no index was added: the plan says the
+one that already exists is not yet earning its keep, which is a better answer
+than the composite `btree_gin` index the plan-of-record contemplated.
+
+**Verified:** 348 tests green (26 files), typecheck, lint and a production build
+clean. Security advisors show only the two documented intentional notices; no
+`function_search_path_mutable`, because both functions set `search_path`. The
+deployed definition was checked with `pg_get_functiondef` rather than against
+the migration file — it uses `chr(2)` and contains no `<mark>`. Migration
+filenames were taken from `list_migrations` *after* applying, which is the
+Phase 3 checkpoint's lesson.
+
+**Open after this feature:**
+
+- **A `rollback` inside an `execute_sql` batch rolls back the whole batch**, including statements before the explicit `begin`. An insert-then-measure script silently lost its insert and the next query read `rows=0`, which looked like a broken index. Seed and measure in separate calls.
+- **No test isolates the `messages` owner policy for this query.** The inner join means the `conversations` policy covers it too. Not a defect — but if the join is ever removed, the isolation test's discriminating power changes and this should be re-mutated.
+- `prompts_tags_idx` is still reported unused, unchanged from F25 and still on purpose.
+
 ### 2026-08-08 — 25 Insert a prompt into the composer
 
 A library button in the composer toolbar opening an anchored popover: search
