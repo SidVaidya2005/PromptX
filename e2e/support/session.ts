@@ -43,6 +43,33 @@ const SUPABASE_URL = () => required('NEXT_PUBLIC_SUPABASE_URL')
 const PUBLISHABLE_KEY = () => required('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
 const SECRET_KEY = () => required('SUPABASE_SECRET_KEY')
 
+/**
+ * Retries a fixture operation through the one transient this project has met
+ * repeatedly: `PGRST303 'JWT issued at future'`.
+ *
+ * It is clock skew between GoTrue, which mints the token, and PostgREST, which
+ * validates it — recorded at F07 and again at F10, and it clears on a retry. A
+ * fixture is exactly where it hurts most: it fails in `beforeAll`, so the
+ * failure lands on whichever test the runner happened to schedule first and
+ * says nothing about the cause. Observed once here taking down the route-census
+ * test, which touches no database at all.
+ *
+ * Bounded and narrow on purpose. Only this code is retried, and only for this
+ * error — a blanket retry would turn a real fault into a slow, intermittent one.
+ */
+export async function retryOnClockSkew<T>(run: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run()
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code
+      if (code !== 'PGRST303' || attempt >= attempts) throw error
+
+      await new Promise((resolve) => setTimeout(resolve, 750 * attempt))
+    }
+  }
+}
+
 export function adminClient(): SupabaseClient<Database> {
   return createClient<Database>(SUPABASE_URL(), SECRET_KEY(), {
     auth: { persistSession: false, autoRefreshToken: false },

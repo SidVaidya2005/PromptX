@@ -482,7 +482,7 @@ export const MAX_TITLE_LENGTH = 60
 
 - Vitest covers `src/server/`. The non-negotiable subjects: `vault.ts` (encrypt/decrypt round-trip, tamper detection, IV uniqueness, key-length validation), `quota.ts` (limit boundary at 19/20/21, breaker trip, slot release on failure, and a concurrency test firing N parallel reservations at the boundary to prove no over-issue), `providers.ts` (each provider resolves, missing key throws, non-Google without a key is refused), and `data/` modules against a local Supabase instance.
 - RLS is tested, not assumed. At least one test signs in as user A and asserts that a direct query for user B's conversation returns zero rows using the anon key.
-- Playwright covers four flows and no more: sign in with Google (against a seeded test user), send a message and receive a stream, add an API key and confirm only `last_four` is displayed, and exhaust the shared quota to see the wall.
+- Playwright covers four **flow** specs and no more: sign in with Google (against a seeded test user), send a message and receive a stream, add an API key and confirm only `last_four` is displayed, and exhaust the shared quota to see the wall. **Plus the audit suite** added at F37 — `accessibility` (axe over every route), `keyboard` (tab order, focus rings, dialog focus), `responsive` (five widths and a coarse pointer), `live-region` (what a screen reader is told while streaming) and `performance` (vitals, the 200-message thread, landing-page JS). The four-flow limit exists to stop E2E growing to cover what a *unit test* can prove; none of these is that, because `vitest.config.ts` runs a node environment over `tests/**` and can see nothing rendered at all. A new flow spec still needs the argument made in writing.
 - Tests describe behaviour, not implementation: `it('refuses the 21st shared-key message of the day')`, not `it('calls reserveSharedSlot')`.
 - No test may make a real call to a paid provider API. Provider clients are mocked at the `resolveModel()` boundary.
 - A feature is not complete until its tests pass. Never report a feature done with a failing or skipped test.
@@ -525,6 +525,7 @@ Approved dependencies for this project:
 - `server-only` — enforces the server boundary at build time
 - `vitest`, `@vitest/coverage-v8` — v4, unit tests
 - `@playwright/test` — E2E tests
+- `@axe-core/playwright` — the accessibility sweep in `e2e/accessibility.spec.ts`. Added at F37 rather than auditing by hand once, because a one-time audit stops being true the moment the next component lands, and nothing else in this project can check a rendered tree
 - `eslint`, `@next/eslint-plugin-next`, `eslint-plugin-import` — linting via the ESLint CLI with flat config (`next lint` was removed in v16). Carries import ordering *and* the `import/no-restricted-paths` zones that enforce the boundary invariants mechanically
 - `prettier`, `prettier-plugin-tailwindcss` — formatting
 
