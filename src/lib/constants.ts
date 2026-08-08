@@ -194,6 +194,29 @@ export const MESSAGE_PAGE_SIZE = 50
 export const SEARCH_RESULT_LIMIT = 30
 
 /**
+ * How long the search box waits before writing the query to the URL. (F27)
+ *
+ * Every navigation is a server render and a database round trip, so this is the
+ * difference between one query and one per keystroke. Long enough that a typed
+ * word travels once, short enough that the results feel like they are following
+ * along rather than arriving late.
+ */
+export const SEARCH_DEBOUNCE_MS = 300
+
+/**
+ * The search param that tells a conversation which message to scroll to. (F27)
+ *
+ * Named here because two files have to agree on it — `/search` writes it into
+ * the link and `/chat/[id]` reads it back — and a mismatch would not throw, it
+ * would silently land the reader at the top of the thread.
+ *
+ * Consumed once: `Chat` jumps, then strips it with `router.replace`, so a
+ * reload of the resulting URL does not re-jump to a message the reader has
+ * already scrolled away from.
+ */
+export const JUMP_TO_MESSAGE_PARAM = 'm'
+
+/**
  * How `search_messages` marks a matched term inside a snippet. (F26)
  *
  * **Not `<mark>`, and the difference is a security boundary rather than a
