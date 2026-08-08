@@ -449,9 +449,28 @@ streamText({ model, messages: [the prompt], abortSignal })
   ▼
 One streaming column. NOTHING is persisted.
   │
-  └─► "Continue with this one" → POST /api/chat creates a real conversation
-        seeded with the prompt and the chosen answer
+  └─► "Continue with this one"
+        │  POST /api/compare/promote  { prompt, answer, provider, modelId }
+        ▼
+      src/app/api/compare/promote/route.ts    (writes only; no provider call)
+        ├─► requireUser()                          → 401
+        ├─► zod-parse                              → 400
+        ├─► findModel()                            → 400 unknown_model
+        ├─► createConversation(provider, modelId)
+        ├─► appendMessage(role: 'user',      the prompt)
+        └─► appendMessage(role: 'assistant', the chosen answer,
+                          status 'complete', used_shared_key FALSE)
+        ▼
+      → /chat/[id], then /api/title names it
 ```
+
+Two things about that route are worth stating where they will be read. It is
+**the one place a client's assistant text is accepted** — see the named
+exception under Invariants → Chat correctness. And its assistant row is written
+`used_shared_key: false` *even when the shared key produced it*, because F31
+already recorded that spend in `compare_count`: counting it again would raise
+the floor the reconciliation sweep compares against, and since the sweep only
+ever lowers, that silently blocks a legitimate refund elsewhere in the same day.
 
 ---
 
@@ -1530,7 +1549,7 @@ infer that a pointer is fine.
 
 - `messages` is a flat, ordered list. No column expressing a parent, branch, or variant may be added to it.
 - Every chat request resolves its model through `resolveModel()`. No route may construct a provider client directly.
-- The client sends only the newest message. History is loaded server-side from the database and is never taken from the request body — a client must not be able to rewrite its own past turns.
+- The client sends only the newest message. History is loaded server-side from the database and is never taken from the request body — a client must not be able to rewrite its own past turns. **One named exception, `POST /api/compare/promote`.** (F32) The rule exists to stop a client steering a *completion* with a fabricated past, and that route calls no provider: it turns a comparison, which persists nothing, into a conversation by writing the prompt and the chosen answer it is given. The consequence is real and accepted rather than hidden — a crafted request can store an assistant turn no model produced, in the caller's own conversation, and `/share/[slug]` will publish it. Any *other* route that accepts assistant content from a client is a bug, and any route that both accepts it and calls a provider breaks this invariant outright.
 - Nothing is persisted until the request is certain to reach a provider. Resolution and quota reservation come first; a `400`, `429`, or `503` leaves no row behind, so a refusal can never produce a prompt with no answer.
 - Once resolution succeeds, the user message and an assistant row with `status = 'streaming'` are both written before the provider call. The assistant row's id is held for the life of the stream, and completion and failure are targeted updates by primary key — never "update the most recent message", which at failure time would target the user's prompt.
 - A stream that fails or aborts keeps whatever partial content arrived and sets `status = 'error'`. Rows are never deleted on failure.

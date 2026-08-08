@@ -765,6 +765,16 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - The user prompt and the chosen assistant response persisted as the first two messages
 - The discarded side is never written anywhere
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The client sends the answer, and the history invariant is narrowed to say so.** F31 persists nothing, so the chosen text exists only in the browser. The rule — "history is never taken from the request body; a client must not be able to rewrite its own past turns" — is about a **generation** request, and exists to stop a client steering the next completion with a fabricated past. `/api/compare/promote` calls no provider, so there is no completion to steer. The invariant gains an explicit exception naming this route. The cost is stated rather than buried: a crafted request can store an assistant turn the model never produced, in the caller's own conversation, and §33 will make that publicly shareable. That is the price of a compare view that persists nothing, and it is the same trust already extended the moment the text left the browser
+- **No `resolveModel()` and no quota reservation, deliberately.** Every other write path resolves a model first because every other one is about to spend somebody's money; this one spends nothing. It still validates catalog membership with `findModel()` and refuses `unknown_model`, because a conversation holding a model id the sender will refuse is a thread that cannot be replied to — F14's rule
+- **The promoted assistant row carries `used_shared_key: false`, even when the shared key really did produce it.** Load-bearing arithmetic rather than bookkeeping. The sweep computes `actual = count(complete shared assistant messages) + compare_count`, and F31 already recorded that generation in `compare_count`. Marking the row `true` counts one spend twice, and because the sweep only ever *lowers*, the inflated floor silently blocks a legitimate refund: after one comparison and one promotion, a genuinely orphaned chat slot that day never comes back. `false` keeps `compare_count` the single record of that spend
+- **`provider` and `model_id` are recorded as claimed, validated against the catalog.** Once the answer text is trusted the label costs no further trust, and writing null would break "every assistant message records the provider and model that produced it" for every promoted thread
+- **A dedicated `POST /api/compare/promote`**, not a branch of `/api/chat` — whose every path ends in a provider call — and not a Server Action, which this project uses nowhere
+- **A stopped column may be promoted, and its partial text is stored `complete`.** The user chose that text as the answer; `error` would put a failure badge on something nothing failed at
+- **`requestTitle` is extracted from `Chat.tsx` rather than copied.** Two copies of an endpoint contract is how they drift. `src/lib/titles.ts` is pure normalisation and the wrong home for a fetch, so it becomes `src/components/chat/request-title.ts`
+
 ### 33 Public share links
 
 **UI:**
