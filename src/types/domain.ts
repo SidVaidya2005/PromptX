@@ -7,7 +7,7 @@
  * application needs on top of them.
  */
 
-import type { Enums, Tables } from '@/types/database'
+import type { Database, Enums, Tables } from '@/types/database'
 
 /**
  * The Postgres enums, aliased rather than restated. `code-standards.md` forbids
@@ -23,6 +23,32 @@ export type Profile = Tables<'profiles'>
 export type Conversation = Tables<'conversations'>
 
 export type Message = Tables<'messages'>
+
+/**
+ * One ranked hit from `search_messages`. (F26)
+ *
+ * Aliased from the generated function return rather than restated, for the same
+ * reason the enums are: a change to the function's `returns table` should be a
+ * type error here, not a silent disagreement.
+ *
+ * `snippet` is **plain text**, with matched terms wrapped in
+ * `SEARCH_MATCH_START` / `SEARCH_MATCH_END`. It is never markup — see the
+ * constants, and the migration, for why.
+ */
+export type SearchResult = Database['public']['Functions']['search_messages']['Returns'][number]
+
+/**
+ * What a search actually found, or why it could not look. (F26)
+ *
+ * A union rather than a bare array because "no matches" and "there was nothing
+ * here to search for" are different answers and the UI has to say different
+ * things. A query of only stopwords — `the and of` — parses to an empty
+ * `tsquery`, so it can never match anything; reporting that as "no results"
+ * reads as the search being broken rather than as the query being empty.
+ */
+export type SearchOutcome =
+  | { status: 'no_terms' }
+  | { status: 'ok'; results: SearchResult[] }
 
 /**
  * One saved prompt in the library. (F24)

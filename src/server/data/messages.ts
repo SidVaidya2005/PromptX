@@ -1,8 +1,10 @@
 import 'server-only'
 
+import { SEARCH_RESULT_LIMIT } from '@/lib/constants'
+
 import { createServerSupabaseClient } from '@/server/supabase'
 
-import type { Message } from '@/types/domain'
+import type { Message, SearchOutcome } from '@/types/domain'
 
 type AppendMessageInput = {
   conversationId: string
@@ -245,4 +247,65 @@ export async function listByConversation(conversationId: string): Promise<Messag
   }
 
   return data
+}
+
+/**
+ * Ranked full-text search across the caller's own messages. (F26)
+ *
+ * No `user_id` argument, and there must never be one. `search_messages` is
+ * `security invoker`, so the owner policy on `messages` is what limits the scan
+ * — passing an id would make application code the thing deciding whose data
+ * this is, which is the arrangement RLS exists to make impossible.
+ *
+ * **Returns an outcome, not an array**, because two different things look
+ * identical as an empty list. A query of only stopwords — `the and of` — parses
+ * to an empty `tsquery` and can never match anything, so reporting it as "no
+ * results" tells someone their library is empty when what happened is that they
+ * never asked a question. The second round trip only happens on that path,
+ * which was already a dead end.
+ *
+ * A blank query short-circuits before any round trip: there is nothing for the
+ * database to tell us about a string with no characters in it. Everything else
+ * goes to Postgres, which owns the stopword list and is the only thing that
+ * knows what parses to nothing.
+ *
+ * The `snippet` on each result is **plain text** with matched terms wrapped in
+ * `SEARCH_MATCH_START`/`SEARCH_MATCH_END`. It is not markup and must never be
+ * rendered as markup — `ts_headline` does not escape the document, and message
+ * content is model output and user input.
+ */
+export async function searchMessages(query: string): Promise<SearchOutcome> {
+  if (query.trim() === '') return { status: 'no_terms' }
+
+  const supabase = await createServerSupabaseClient()
+
+  const { data, error } = await supabase.rpc('search_messages', {
+    query,
+    result_limit: SEARCH_RESULT_LIMIT,
+  })
+
+  if (error) {
+    console.error('[data/messages] searchMessages failed', error)
+    throw new Error('Search failed')
+  }
+
+  const results = data ?? []
+  if (results.length > 0) return { status: 'ok', results }
+
+  // Nothing matched. Ask whether the query contained anything that *could*
+  // have matched, so the caller can tell "try different words" from "there is
+  // nothing here".
+  const { data: hasTerms, error: termsError } = await supabase.rpc('search_has_terms', {
+    query,
+  })
+
+  if (termsError) {
+    // Not fatal: the search itself succeeded and found nothing, which is a
+    // complete answer on its own. Degrade to the commoner of the two readings
+    // rather than failing a request that already has its result.
+    console.error('[data/messages] searchHasTerms failed', termsError)
+    return { status: 'ok', results }
+  }
+
+  return hasTerms ? { status: 'ok', results } : { status: 'no_terms' }
 }

@@ -193,6 +193,28 @@ export const MESSAGE_PAGE_SIZE = 50
 
 export const SEARCH_RESULT_LIMIT = 30
 
+/**
+ * How `search_messages` marks a matched term inside a snippet. (F26)
+ *
+ * **Not `<mark>`, and the difference is a security boundary rather than a
+ * styling choice.** `ts_headline` does not escape the document it summarises —
+ * measured against this project before the function was written, an
+ * `<img src=x onerror=alert(2)>` in a message came through the headline intact,
+ * and fragment selection cut another tag in half. Message content is model
+ * output and user input, so a snippet rendered as HTML would execute whatever
+ * someone put in a message.
+ *
+ * STX and ETX cannot occur in prose, survive JSON encoding, and mean nothing to
+ * a browser. F27 splits on them and emits real React elements, so no consumer
+ * ever holds a string it might be tempted to pass to `dangerouslySetInnerHTML`.
+ *
+ * These two values are duplicated in `20260808024702_search_messages.sql` as
+ * `chr(2)` and `chr(3)`, which is the one place they could drift. A test asserts
+ * the snippet actually comes back wrapped in them.
+ */
+export const SEARCH_MATCH_START = '\u0002'
+export const SEARCH_MATCH_END = '\u0003'
+
 /** Conversation title generated from the first exchange, capped for the sidebar. */
 export const MAX_TITLE_LENGTH = 60
 
