@@ -24,7 +24,7 @@
  * not generated does not belong here.
  */
 
-import { SHARED_MODEL_ID } from '@/lib/constants'
+import { ALLOWED_ATTACHMENT_MIME_TYPES, SHARED_MODEL_ID } from '@/lib/constants'
 
 import type { Provider } from '@/types/domain'
 
@@ -35,7 +35,7 @@ export type Model = {
   label: string
   /** Input tokens the model accepts. Display only until a feature needs to budget. */
   contextWindow: number
-  /** Read from feature 30. Nothing consumes these yet. */
+  /** Read through `acceptedMimeTypes()`, which is the only thing that reads them. */
   supportsImages: boolean
   supportsPdf: boolean
 }
@@ -118,6 +118,56 @@ export const MODEL_CATALOG: Record<Provider, readonly Model[]> = {
       contextWindow: 1_048_576,
       supportsImages: true,
       supportsPdf: true,
+    },
+    {
+      /**
+       * Reads images, refuses PDFs — the entry that makes the two flags mean
+       * different things. (F30)
+       *
+       * Added because the gate is per file type and nothing could exercise that:
+       * with every entry setting both flags alike, swapping `supportsImages` and
+       * `supportsPdf` in `acceptedMimeTypes()` left the whole suite green.
+       * Measured, not predicted — the mutation was run first and passed, which
+       * is the F15 lesson about a test comparing a function against itself.
+       *
+       * `"input_modalities": ["text", "image"]` with no `"file"` from
+       * OpenRouter's models endpoint on 2026-08-08. That combination is not
+       * unusual: 94 of the 400 models listed that day read images and not PDFs.
+       */
+      id: 'meta-llama/llama-4-maverick',
+      label: 'Llama 4 Maverick',
+      contextWindow: 1_048_576,
+      supportsImages: true,
+      supportsPdf: false,
+    },
+    {
+      /**
+       * The one entry that refuses files, and it is here on purpose. (F30)
+       *
+       * Every model F14 shipped accepts images and PDFs, so feature 30's whole
+       * point — a disabled attach button, a warning on switching, a server
+       * refusal — had nothing that could reach it. A guard with nothing to
+       * refuse is indistinguishable from no guard, which F28 learned the
+       * expensive way; this makes the gate reachable by construction.
+       *
+       * The flags are evidence rather than assertion. OpenRouter's
+       * `/api/v1/models` reports this id as `"modality": "text->text"` with
+       * `"input_modalities": ["text"]` — read on 2026-08-08, quoted in the
+       * journal — which is the same listed-then-proven standard the note at the
+       * top of this file demands. Proven by a real send through the
+       * application, because the OpenRouter key lives encrypted in the vault and
+       * only the server can decrypt it.
+       *
+       * Not pinned to the dated `-0731` snapshot, unlike SHARED_MODEL_ID. That
+       * rule exists because feature 17 derives `estimated_usd` from a rate card
+       * for the key PromptX pays for; this one is billed to whoever owns the
+       * key, so a moving id costs no ledger its accuracy.
+       */
+      id: 'deepseek/deepseek-v4-flash',
+      label: 'DeepSeek V4 Flash',
+      contextWindow: 1_048_576,
+      supportsImages: false,
+      supportsPdf: false,
     },
   ],
 }
@@ -203,6 +253,51 @@ export function willUseSharedKey(
   configuredProviders: readonly Provider[],
 ): boolean {
   return !configuredProviders.includes(provider) && isSharedModel(provider, modelId)
+}
+
+/**
+ * The mime types this model will actually read. (F30)
+ *
+ * **The one definition of what a model accepts**, and it has four readers that
+ * must not drift: the composer disables its attach button when this is empty,
+ * the file input's `accept` is built from it, the model picker warns before
+ * dropping files a new model cannot read, and `/api/chat` refuses a send whose
+ * attachments are not in it. The first three run in the browser and the fourth
+ * on the server — the same split that made `isSharedModel` one function at F15,
+ * for the same reason: two spellings would offer what the server refuses, or
+ * refuse what would have worked.
+ *
+ * Derived from the two flags rather than stored, so a catalog entry cannot
+ * declare a mime list that disagrees with its own capabilities.
+ *
+ * An unknown model accepts nothing. That is the safe direction and it is not the
+ * error path: `resolveModel()` refuses an unknown id with `unknown_model`, and
+ * callers here check membership first so that refusal is the one a user sees.
+ */
+export function acceptedMimeTypes(
+  provider: Provider,
+  modelId: string,
+): readonly string[] {
+  const model = findModel(provider, modelId)
+  if (!model) return []
+
+  return ALLOWED_ATTACHMENT_MIME_TYPES.filter((mimeType) =>
+    mimeType === 'application/pdf' ? model.supportsPdf : model.supportsImages,
+  )
+}
+
+/**
+ * Whether this model reads this kind of file.
+ *
+ * Membership in `acceptedMimeTypes` rather than a second reading of the flags,
+ * so "what a model accepts" has exactly one answer and this is a view onto it.
+ */
+export function acceptsMimeType(
+  provider: Provider,
+  modelId: string,
+  mimeType: string,
+): boolean {
+  return acceptedMimeTypes(provider, modelId).includes(mimeType)
 }
 
 /**

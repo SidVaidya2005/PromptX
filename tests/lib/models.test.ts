@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { SHARED_MODEL_ID } from '@/lib/constants'
+import { ALLOWED_ATTACHMENT_MIME_TYPES, SHARED_MODEL_ID } from '@/lib/constants'
 import {
+  acceptedMimeTypes,
+  acceptsMimeType,
   decodeModelKey,
   encodeModelKey,
   findModel,
@@ -214,5 +216,76 @@ describe('availability', () => {
 
     expect(openRouterModel).toBeDefined()
     expect(isModelAvailable('openrouter', openRouterModel!.id, ['google'])).toBe(false)
+  })
+})
+
+/**
+ * What a model will read, and the one place it is decided. (F30)
+ *
+ * Four surfaces consume this — the attach button, the file input's `accept`, the
+ * warning before a model switch drops files, and the server's refusal — and the
+ * first three are in the browser while the fourth is not. A second spelling
+ * anywhere would offer what the server refuses or hide what would have worked.
+ */
+describe('acceptedMimeTypes', () => {
+  it('gives a fully capable model every allowed type', () => {
+    expect(acceptedMimeTypes('google', SHARED_MODEL_ID)).toEqual([
+      ...ALLOWED_ATTACHMENT_MIME_TYPES,
+    ])
+  })
+
+  it('gives a model that reads images but not PDFs only the image types', () => {
+    const accepted = acceptedMimeTypes('openrouter', 'meta-llama/llama-4-maverick')
+
+    expect(accepted).toContain('image/png')
+    expect(accepted).not.toContain('application/pdf')
+
+    // The case the whole per-file-type design exists for: the attach button
+    // stays live and only the `accept` list narrows.
+    expect(accepted.length).toBeGreaterThan(0)
+  })
+
+  it('gives a text-only model nothing', () => {
+    expect(acceptedMimeTypes('openrouter', 'deepseek/deepseek-v4-flash')).toEqual([])
+  })
+
+  it('gives an unknown model nothing rather than everything', () => {
+    // The safe direction. It is also not the error a user sees: resolveModel()
+    // refuses an unknown id with unknown_model, and the callers here check
+    // membership first so that refusal is the one that surfaces.
+    expect(acceptedMimeTypes('google', 'no-such-model')).toEqual([])
+    expect(acceptsMimeType('google', 'no-such-model', 'image/png')).toBe(false)
+  })
+
+  it('derives from the flags rather than restating them', () => {
+    // Every entry's accepted list must agree with its own two booleans, so a
+    // catalog row cannot claim a capability the list does not carry.
+    for (const [provider, models] of Object.entries(MODEL_CATALOG)) {
+      for (const model of models) {
+        const accepted = acceptedMimeTypes(provider as Provider, model.id)
+
+        expect(accepted.includes('application/pdf')).toBe(model.supportsPdf)
+        expect(accepted.includes('image/png')).toBe(model.supportsImages)
+      }
+    }
+  })
+})
+
+/**
+ * The pin that keeps this feature from quietly becoming decorative.
+ *
+ * F30's gate — a disabled attach button, a warning on switching, a server
+ * refusal — is only ever exercised by a model that refuses something. Every
+ * entry F14 shipped accepted everything, which is why the gate had nothing to
+ * reach it until this catalog gained a text-only model. If a later tidy-up
+ * removes the last one, that is worth a red test rather than silence.
+ */
+describe('the catalog keeps the capability gate reachable', () => {
+  it('still contains a model that accepts no files at all', () => {
+    const entries = PROVIDER_ORDER.flatMap((provider) =>
+      MODEL_CATALOG[provider].map((model) => acceptedMimeTypes(provider, model.id)),
+    )
+
+    expect(entries.some((accepted) => accepted.length === 0)).toBe(true)
   })
 })
