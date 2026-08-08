@@ -11,6 +11,7 @@ import type { ChatMessage } from '@/lib/messages'
 import { outlineAnchorId, toOutlineEntries } from '@/lib/outline'
 
 import { Composer } from '@/components/chat/Composer'
+import { requestTitle } from '@/components/chat/request-title'
 import { Thread, type AttachmentsByMessage } from '@/components/chat/Thread'
 import { useModelMutation } from '@/components/chat/use-model-mutation'
 import { useConversationMutation } from '@/components/sidebar/use-conversation-mutation'
@@ -637,29 +638,4 @@ export function Chat({
       />
     </div>
   )
-}
-
-/**
- * True when the server actually wrote a title.
- *
- * False covers every other outcome identically — refused, already named, model
- * failed, network down — because the caller does the same thing in all of them:
- * nothing. Titling is a courtesy, and a conversation called 'New chat' is a
- * working conversation.
- */
-async function requestTitle(conversationId: string): Promise<boolean> {
-  try {
-    const response = await fetch('/api/title', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId }),
-    })
-
-    if (!response.ok) return false
-
-    const { title } = (await response.json()) as { title: string | null }
-    return title !== null
-  } catch {
-    return false
-  }
 }
