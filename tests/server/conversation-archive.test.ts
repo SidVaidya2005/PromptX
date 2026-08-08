@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * Archive, proven against the real hosted project. (F22)
@@ -139,7 +140,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('setConversationArchived', () => {
+describeHosted('setConversationArchived', () => {
   it('sets archived_at, and clears it again', async () => {
     const data = await load(owner)
     const id = await seedConversation(owner.id, { title: 'Put me away' })
@@ -221,7 +222,7 @@ describe('setConversationArchived', () => {
   })
 })
 
-describe('listConversations', () => {
+describeHosted('listConversations', () => {
   it('omits archived rows by default and includes them when asked', async () => {
     const data = await load(owner)
     const live = await seedConversation(owner.id, { title: 'Still here' })

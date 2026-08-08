@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The bytea round trip, proven against the real database rather than reasoned
@@ -96,7 +97,7 @@ afterAll(async () => {
   if (userId) await admin.auth.admin.deleteUser(userId)
 })
 
-describe('provider key storage', () => {
+describeHosted('provider key storage', () => {
   it('returns the original key after a full write and read through the database', async () => {
     const { data, vault } = await load()
     const plaintext = 'sk-test-round-trip-000000000042'

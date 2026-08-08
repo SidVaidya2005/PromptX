@@ -1,9 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The auth configuration lives in a dashboard, not in a migration. It produces
@@ -48,7 +49,7 @@ afterAll(async () => {
   }
 })
 
-describe('the auth configuration', () => {
+describeHosted('the auth configuration', () => {
   it('offers Google sign-in and still lets new accounts be created', async () => {
     const response = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
       headers: { apikey: PUBLISHABLE_KEY },

@@ -1,11 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import { DEFAULT_CONVERSATION_TITLE } from '@/lib/constants'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * Rename and pin, proven against the real hosted project. (F21)
@@ -143,7 +144,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('renameConversation', () => {
+describeHosted('renameConversation', () => {
   it('writes the title and reports that a row changed', async () => {
     const data = await load(owner)
     const id = await seedConversation(owner.id, 'Before')
@@ -184,7 +185,7 @@ describe('renameConversation', () => {
   })
 })
 
-describe('setConversationPinned', () => {
+describeHosted('setConversationPinned', () => {
   it('sets pinned_at, and clears it again', async () => {
     const data = await load(owner)
     const id = await seedConversation(owner.id, 'Pin me')
@@ -254,7 +255,7 @@ describe('setConversationPinned', () => {
  * Verified by mutation: removing `.eq('title', DEFAULT_CONVERSATION_TITLE)` from
  * `setGeneratedTitle` turns the first of these red and leaves the second green.
  */
-describe('setGeneratedTitle after a rename', () => {
+describeHosted('setGeneratedTitle after a rename', () => {
   it('declines to rename a conversation the user has already named', async () => {
     const data = await load(owner)
     const id = await seedConversation(owner.id, DEFAULT_CONVERSATION_TITLE)

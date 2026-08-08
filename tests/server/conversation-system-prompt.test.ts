@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The per-conversation system prompt, proven against the real hosted project.
@@ -140,7 +141,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('updateSystemPrompt', () => {
+describeHosted('updateSystemPrompt', () => {
   it('sets a prompt and reports that a row changed', async () => {
     const data = await load(owner)
     const id = await seedConversation(owner.id, { title: 'Instructed' })
@@ -202,7 +203,7 @@ describe('updateSystemPrompt', () => {
  * created without a prompt has to be indistinguishable from one that never had
  * one, or "Default" would stop meaning what the control says it means.
  */
-describe('createConversation with a system prompt', () => {
+describeHosted('createConversation with a system prompt', () => {
   const model = { provider: 'google' as const, modelId: 'gemini-3.6-flash' }
 
   it('persists a prompt passed at creation', async () => {

@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * Row-Level Security is the isolation boundary in this project, not application
@@ -163,7 +164,7 @@ afterAll(async () => {
   }
 })
 
-describe('a signed-in user reading their own data', () => {
+describeHosted('a signed-in user reading their own data', () => {
   it('sees their own conversation and nobody else’s', async () => {
     const { data, error } = await alice.client.from('conversations').select('id')
 
@@ -189,7 +190,7 @@ describe('a signed-in user reading their own data', () => {
  * Both tests seed their own throwaway conversation rather than destroying the
  * shared fixture the rest of this file asserts against.
  */
-describe('deleting a conversation you own', () => {
+describeHosted('deleting a conversation you own', () => {
   async function seedConversation(): Promise<{ id: string; messageId: string }> {
     const { data: conversation, error: conversationError } = await admin
       .from('conversations')
@@ -251,7 +252,7 @@ describe('deleting a conversation you own', () => {
   })
 })
 
-describe('a signed-in user reaching for another user’s rows', () => {
+describeHosted('a signed-in user reaching for another user’s rows', () => {
   it('cannot read a conversation by its id', async () => {
     const { data } = await alice.client
       .from('conversations')
@@ -345,7 +346,7 @@ describe('a signed-in user reaching for another user’s rows', () => {
   })
 })
 
-describe('an anonymous visitor holding only the publishable key', () => {
+describeHosted('an anonymous visitor holding only the publishable key', () => {
   it('reads nothing from any table', async () => {
     for (const table of [
       'profiles',
@@ -363,7 +364,7 @@ describe('an anonymous visitor holding only the publishable key', () => {
   })
 })
 
-describe('public share links', () => {
+describeHosted('public share links', () => {
   it('exposes a conversation and its messages only while the slug is set', async () => {
     // Not shared yet.
     const { data: before } = await stranger
@@ -422,7 +423,7 @@ describe('public share links', () => {
   })
 })
 
-describe('a share link read by somebody who is signed in', () => {
+describeHosted('a share link read by somebody who is signed in', () => {
   /**
    * **The trap F33 was built around, pinned so nobody removes the anon client.**
    *
@@ -472,7 +473,7 @@ describe('a share link read by somebody who is signed in', () => {
   })
 })
 
-describe('attachment metadata on a shared conversation', () => {
+describeHosted('attachment metadata on a shared conversation', () => {
   /**
    * F33 added the anon policy this exercises. The distinction it draws is the
    * whole point: the ROW becomes readable so the share page can say a file was
@@ -543,7 +544,7 @@ describe('attachment metadata on a shared conversation', () => {
   })
 })
 
-describe('attachment storage', () => {
+describeHosted('attachment storage', () => {
   it('keeps one user out of another’s object prefix', async () => {
     const path = `${bob.id}/probe.png`
 

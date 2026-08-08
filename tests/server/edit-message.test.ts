@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * `edit_message_and_truncate` is the only destructive write in the application,
@@ -161,7 +162,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('edit_message_and_truncate', () => {
+describeHosted('edit_message_and_truncate', () => {
   it('rewrites a mid-thread prompt and deletes only what came after it', async () => {
     // user0 assistant0 user1 assistant1 user2 assistant2
     const { conversationId, ids } = await seedThread(owner.id, 3)

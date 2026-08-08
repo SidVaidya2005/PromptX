@@ -1,11 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import { SEARCH_MATCH_END, SEARCH_MATCH_START, SEARCH_RESULT_LIMIT } from '@/lib/constants'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * `search_messages`, against the real hosted project. (F26)
@@ -211,7 +212,7 @@ async function search(actor: Actor, query: string) {
   return data.searchMessages(query)
 }
 
-describe('searchMessages', () => {
+describeHosted('searchMessages', () => {
   it('ranks a message that repeats the term above one that mentions it once', async () => {
     const outcome = await search(owner, 'zylophone')
 

@@ -1,11 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 
 import { SHARED_KEY_DAILY_MESSAGE_LIMIT, SHARED_MODEL_ID } from '@/lib/constants'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The quota functions, against the real database.
@@ -131,7 +132,7 @@ beforeEach(async () => {
     .eq('usage_date', today())
 })
 
-describe('reserve_shared_slot', () => {
+describeHosted('reserve_shared_slot', () => {
   it('claims the first slot of the day by creating the row', async () => {
     const { data, error } = await reserve()
 
@@ -286,7 +287,7 @@ describe('reserve_shared_slot', () => {
   })
 })
 
-describe('release_shared_slot', () => {
+describeHosted('release_shared_slot', () => {
   it('refunds exactly one slot', async () => {
     await setCount(5)
 
@@ -367,7 +368,7 @@ describe('release_shared_slot', () => {
   })
 })
 
-describe('record_shared_tokens', () => {
+describeHosted('record_shared_tokens', () => {
   it('accumulates rather than overwrites', async () => {
     await setCount(1)
 
@@ -401,7 +402,7 @@ describe('record_shared_tokens', () => {
   })
 })
 
-describe('reconcile_shared_key_usage', () => {
+describeHosted('reconcile_shared_key_usage', () => {
   /**
    * The self-healing half of the reservation bargain, shipped at F02 and
    * running on pg_cron every ten minutes ever since — against a database that

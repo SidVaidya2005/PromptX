@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * Feature 20 deletes a message by primary key — the application's first delete
@@ -155,7 +156,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('deleting one message by id', () => {
+describeHosted('deleting one message by id', () => {
   it('removes the answer and leaves the prompt that produced it', async () => {
     const { conversationId, promptId, answerId } = await seedExchange(owner.id)
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
@@ -12,6 +12,7 @@ import {
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The upload pipeline, tested where it actually lives. (F28)
@@ -159,7 +160,7 @@ afterAll(async () => {
   }
 })
 
-describe('the attachments bucket', () => {
+describeHosted('the attachments bucket', () => {
   /**
    * The one place the SQL and `src/lib/constants.ts` could drift. SQL cannot
    * import TypeScript, so the migration restates both figures — and a limit that
@@ -242,7 +243,7 @@ describe('the attachments bucket', () => {
   })
 })
 
-describe('link_attachments_to_message', () => {
+describeHosted('link_attachments_to_message', () => {
   it('assigns position from the order of the ids, not from the rows', async () => {
     const messageId = await seedMessage(owner)
     const first = await seedAttachment(owner)
@@ -351,7 +352,7 @@ describe('link_attachments_to_message', () => {
   })
 })
 
-describe('orphaned_attachment_objects', () => {
+describeHosted('orphaned_attachment_objects', () => {
   it('finds an object whose row was cascaded away, and leaves the rest alone', async () => {
     const kept = `${owner.id}/${crypto.randomUUID()}-kept.png`
     const stray = `${owner.id}/${crypto.randomUUID()}-stray.png`
@@ -413,7 +414,7 @@ describe('orphaned_attachment_objects', () => {
   })
 })
 
-describe('the reap-attachments Edge Function', () => {
+describeHosted('the reap-attachments Edge Function', () => {
   const endpoint = `${SUPABASE_URL}/functions/v1/reap-attachments`
 
   it('refuses a caller who is merely signed in', async () => {

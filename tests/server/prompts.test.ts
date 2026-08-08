@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import type { Database } from '@/types/database'
 
 import { requiredEnv } from '../support/env'
+import { describeHosted } from '../support/hosted'
 
 /**
  * The prompt library's data module, against the real hosted project. (F24)
@@ -143,7 +144,7 @@ afterAll(async () => {
   }
 }, 30_000)
 
-describe('createPrompt', () => {
+describeHosted('createPrompt', () => {
   it('stores the row and returns it', async () => {
     const data = await load(owner)
 
@@ -175,7 +176,7 @@ describe('createPrompt', () => {
   })
 })
 
-describe('listPrompts', () => {
+describeHosted('listPrompts', () => {
   it('returns only the caller’s prompts', async () => {
     const mine = await seedPrompt(owner.id, { title: 'Mine' })
     await seedPrompt(stranger.id, { title: 'Theirs' })
@@ -208,7 +209,7 @@ describe('listPrompts', () => {
   })
 })
 
-describe('updatePrompt', () => {
+describeHosted('updatePrompt', () => {
   const edit = { title: 'Edited', body: 'Edited body.', tags: ['edited'] }
 
   it('rewrites all three columns and returns the row', async () => {
@@ -260,7 +261,7 @@ describe('updatePrompt', () => {
   })
 })
 
-describe('deletePrompt', () => {
+describeHosted('deletePrompt', () => {
   it('deletes the row and reports that it went', async () => {
     const data = await load(owner)
     const id = await seedPrompt(owner.id, { title: 'Doomed' })
@@ -299,7 +300,7 @@ describe('deletePrompt', () => {
  * user's prompts. There is no `.eq('user_id')` anywhere in the path, by design:
  * the owner-read policy is the filter, and this is what says so out loud.
  */
-describe('the library as GET /api/prompts serves it', () => {
+describeHosted('the library as GET /api/prompts serves it', () => {
   it("never includes another user's prompt, with no user id passed anywhere", async () => {
     const mine = await seedPrompt(owner.id, { title: 'Mine to read' })
     const theirs = await seedPrompt(stranger.id, { title: 'Not mine to read' })

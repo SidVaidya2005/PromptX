@@ -840,6 +840,14 @@ The first end-to-end path. Gemini only, no quota enforcement yet.
 - Provider calls mocked at the `resolveModel()` boundary — no test spends money
 - `pnpm test` green from a clean checkout
 
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **"Green from a clean checkout" was false by construction, and the fix is a loud skip rather than a quiet one.** Every hosted suite calls `requiredEnv()` at module scope, so a clone without `.env.local` does not fail a test — it fails to *load*, thirteen files at once. `describeHosted` skips them and a banner names the count and the reason. The load-bearing half is the opposite case: `.env.local` present but **incomplete** is an error, not a skip, because one missing variable would otherwise turn three hundred assertions into a green no-op — the guard-that-cannot-fire failure `constraints.md` records from F28 and F30
+- **"Every table added since Phase 0" describes nothing: F02 created all eight and none has been added.** Read literally the line is a no-op, so it is read as the thing it was reaching for — a table×verb matrix over every policy that exists, plus a **census** that reads `pg_policies` off the live project and fails on any policy the matrix does not name. That is what stops the next policy shipping uncovered, which the literal reading could never do
+- **"No test spends money" becomes a mechanism rather than a habit.** A setup file installs a `fetch` guard that throws on any request to a provider host not intercepted by a test's own mock; Supabase passes through. A rule held only by everyone remembering it is the same shape as a guard with nothing to refuse — this one is proven by making a real call and watching it throw
+- **Coverage is a discovery instrument and does not gate.** `@vitest/coverage-v8` has been installed and idle since F01; `pnpm test:coverage` puts it to work finding branch gaps, and the number goes in the journal. No threshold in `pnpm test`: a percentage gate on a suite that pays a Singapore round trip per test invites tests written to move a number, which is the decorative-mechanism failure F28, F31 and F34 each recorded in a different costume
+- **`budget.test.ts` restores per test, and the residual is stated rather than claimed closed.** It writes the live singleton ledger, and an abort between snapshot and restore already tripped the shared key for real users once (F19). `afterEach` plus a `process.once` handler shrinks the window from suite-length to test-length and covers Ctrl-C; a network fault *during* the restore call still leaves the row wrong, and only a local stack fixes that
+
 ### 36 End-to-end suite
 
 **Logic:**
