@@ -75,6 +75,24 @@ about this deployment. Two consequences bind the build:
 Revisit this if the project goes into an application; upgrading is a dashboard
 change with no code impact.
 
+### Every environment variable is needed at build time
+
+Including the secrets. The `NEXT_PUBLIC_*` half is the familiar rule — Next
+inlines those into the bundle, so they are fixed when `next build` runs. The
+part that is easy to miss is that `src/server/env.ts` calls
+`serverEnvSchema.parse(process.env)` at **module load**, deliberately, so the
+process fails to boot on a missing variable rather than at the first request
+that needs one. `next build` evaluates those same modules while collecting page
+data — `/prompts` reaches `serverEnv` through `data/prompts` → `supabase.ts` —
+so a missing `SUPABASE_SECRET_KEY` fails the build, not the first request.
+
+This is a good property and should not be "fixed" by making the parse lazy. It
+is recorded because of how it presents on Render: `sync: false` means the
+dashboard prompts for a value only at **initial Blueprint creation**, so a
+skipped prompt produces a first deploy that dies inside `next build` on
+whichever variable happens to be read first. It reads like a code fault and is
+not one. Found this way at F38, on the first real deploy.
+
 ### Region
 
 Put the Render service in the region closest to the Supabase project. Every

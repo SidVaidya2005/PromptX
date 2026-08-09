@@ -66,6 +66,21 @@ services:
         - "*.md"
 
     envVars:
+      # EVERY variable below is required at BUILD time, secrets included — not
+      # just the NEXT_PUBLIC_ ones. (F38, learned from a failed deploy.)
+      #
+      # The public five are inlined by Next, which is the widely-known half. The
+      # three secrets are needed because src/server/env.ts parses process.env at
+      # module load — deliberately, so the process fails to boot on a missing
+      # variable rather than failing at the first request that needs one. What
+      # nobody had written down is that `next build` evaluates those same modules
+      # while collecting page data, so a missing secret fails the BUILD.
+      #
+      # This bites specifically on Render because `sync: false` means the
+      # dashboard prompts for these values only at initial Blueprint creation.
+      # Miss that prompt and the first deploy dies in `next build` on whichever
+      # variable is read first, which reads like a code fault and is not one.
+      #
       # ─── Public ─────────────────────────────────────────────────────────
       #
       # All five are NEXT_PUBLIC_ and therefore inlined at BUILD time, not read
