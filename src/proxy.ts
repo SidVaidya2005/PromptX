@@ -53,8 +53,17 @@ export async function proxy(request: NextRequest) {
   return response
 }
 
+/**
+ * `api/health` is excluded deliberately, not for performance. (F38)
+ *
+ * Render probes it on an interval, and architecture.md states the route does no
+ * session lookup and no database read. Running it through this proxy would put
+ * a Supabase client construction in front of every probe — and while auth-js
+ * short-circuits locally when no cookie is present, that makes the claim a fact
+ * about the prober's headers rather than about the route.
+ */
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api/health|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
