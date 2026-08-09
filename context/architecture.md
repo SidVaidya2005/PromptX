@@ -745,12 +745,17 @@ invented data, cutting off every user for spend that may not have happened. A
 small systematic undercount is the acceptable failure mode, and it is why the
 ceiling carries headroom.
 
-Because the breaker is therefore best-effort, **the authoritative spend cap is
-set at the provider**: a hard budget limit on the Google Cloud billing account
-backing `SHARED_GEMINI_API_KEY`. The application-level breaker exists to stop
-runaway usage early and give users a clear message; the provider-side cap is what
-actually guarantees the bill. Configuring it is a step in feature 38, not
-optional hardening.
+Because the breaker is therefore best-effort, **the authoritative cap is set at
+the provider**. This was written expecting a hard budget limit on a Google Cloud
+billing account; F38 settled the shared key on the **free tier, permanently**, so
+what is actually enforcing the ceiling is Google's own request quota — 20 per day
+across all users, 5 per minute — refused with a 429 and costing nothing.
+
+That is a stronger guarantee than a budget alert, and it changes two things
+downstream:
+
+- **The monthly USD breaker currently guards nothing.** `estimated_usd` is derived from a rate card against spend that never happens, so it cannot reach the ceiling. The code is correct and stays, because it becomes live the moment a billed key is configured — but it must not be cited as evidence that spend is bounded. Nothing is spent.
+- **The binding limit is a request count, not a dollar figure**, and it is *global* rather than per-user. That is what forced `NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT` down to 5: a per-user allowance larger than a fifth of the global daily quota means the first visitor exhausts the project and everyone after them is refused by Google rather than by PromptX.
 
 ### Row-Level Security
 
