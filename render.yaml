@@ -1,0 +1,115 @@
+# PromptX — Render Blueprint (F38)
+#
+# One long-lived Node web service running `next start`. Not serverless: see
+# "Hosting model" in context/architecture.md before changing anything here.
+#
+# Secrets are NEVER literal values in this file — it is committed. Every one is
+# `sync: false`, which makes Render prompt for it at Blueprint creation and
+# thereafter keep it in the dashboard only.
+
+services:
+  - type: web
+    name: promptx
+    # `runtime` replaces the deprecated `env` key. Node, always — there is no
+    # Edge runtime here, which is why node:crypto in the vault is never at risk.
+    runtime: node
+    plan: free
+    # Matched to the Supabase project's region (ap-southeast-1). Every request
+    # does an auth check and at least one query, so a cross-continent hop would
+    # be paid on every page load, twice.
+    region: singapore
+    branch: main
+    # The Next app IS the repo root. This is a monorepo setting and this is not
+    # a monorepo — pointing it at a subdirectory excludes package.json from the
+    # build entirely.
+    rootDir: .
+
+    # Do NOT replace this with `corepack enable`. Node 26 no longer bundles
+    # Corepack (verified absent at F01), so it cannot be assumed present on the
+    # build image, and the failure mode is a build that dies with
+    # `pnpm: not found`. Reading the version out of `packageManager` keeps the
+    # same pinning guarantee Corepack would have given.
+    #
+    # `&&` rather than newlines: without it a failed install would still reach
+    # `pnpm build`, and the deploy would ship whatever the previous step left.
+    buildCommand: >-
+      npm i -g pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]") &&
+      pnpm install --frozen-lockfile &&
+      pnpm build
+
+    # `next start` binds $PORT automatically. Never hardcode it.
+    startCommand: pnpm start
+
+    # Returns { ok: true } and touches nothing — no session, no database, no
+    # build metadata. A health check that reads the database turns a slow query
+    # into a restart loop.
+    healthCheckPath: /api/health
+
+    autoDeployTrigger: commit
+
+    # Roughly half this repo is documentation the running service never reads,
+    # and on the free tier every deploy restarts the process — handing the next
+    # visitor a ~60s cold start for a change that altered no runtime behaviour.
+    #
+    # `ignoredPaths` only, never `paths`. An include list fails open in the
+    # wrong direction: any path nobody thought to list silently stops
+    # deploying, and the symptom is a real fix that never shipped.
+    #
+    # Paths are relative to the repo root regardless of rootDir, and a synced
+    # buildFilter FULLY REPLACES the service's existing settings rather than
+    # merging — so this block is the whole truth, not a patch on dashboard state.
+    buildFilter:
+      ignoredPaths:
+        - context/**
+        - docs/**
+        - .claude/**
+        - "*.md"
+
+    envVars:
+      # ─── Public ─────────────────────────────────────────────────────────
+      #
+      # All five are NEXT_PUBLIC_ and therefore inlined at BUILD time, not read
+      # at runtime. Changing any of them on Render needs a rebuild, not a
+      # restart. Forgetting this produces an OAuth redirect to the old URL with
+      # no error to explain it.
+      #
+      # They are `sync: false` despite not being secret. Two of them identify a
+      # specific Supabase project, and this file is a template someone could
+      # deploy from — a literal value would point their instance at ours.
+
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+
+      # MUST be set to the final service URL before the first build that ships.
+      # It cannot be derived from `fromService`: that yields a bare host with no
+      # scheme, and this value needs the https:// prefix.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+      - key: NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT
+        sync: false
+
+      - key: NEXT_PUBLIC_SHARED_KEY_MONTHLY_USD_CEILING
+        sync: false
+
+      # ─── Secret ─────────────────────────────────────────────────────────
+
+      # Assumes service_role and bypasses RLS entirely. Only src/server/quota.ts
+      # may build a client from it.
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+
+      # 32 bytes base64. Rotating this invalidates every stored user API key, so
+      # rotation needs a re-encryption migration rather than just a new value.
+      - key: ENCRYPTION_KEY
+        sync: false
+
+      # The billed Google key behind the shared Gemini fallback. A hard budget
+      # cap on the backing Google Cloud billing account is what actually
+      # guarantees the bill — the in-app circuit breaker is best-effort and
+      # fails open by design.
+      - key: SHARED_GEMINI_API_KEY
+        sync: false

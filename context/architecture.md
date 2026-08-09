@@ -95,17 +95,24 @@ change that altered no runtime behaviour. `render.yaml` therefore carries:
 
 ```yaml
 buildFilter:
-  ignored:
+  ignoredPaths:
     - context/**
-    - "*.md"
+    - docs/**
     - .claude/**
+    - "*.md"
 ```
 
-Ignore-lists only. An `included` list fails open in the wrong direction: any path
-nobody thought to list silently stops deploying, and the symptom is a real fix
-that never shipped. Filter paths are relative to the repository root regardless
-of `rootDir`, and a synced `buildFilter` fully replaces the service's existing
-settings rather than merging with them.
+**The keys are `paths` and `ignoredPaths`.** This document said `ignored` from
+Phase 0 until F38 wrote the file and checked the spec — `included`/`ignored` are
+not Render's spelling, and because a synced `buildFilter` *fully replaces* the
+service's settings rather than merging, a Blueprint written from the old wording
+would not have errored. It would have replaced the filter with empty lists and
+gone back to rebuilding on every documentation commit, with nothing to say so.
+
+Ignore-lists only. A `paths` include-list fails open in the wrong direction: any
+path nobody thought to list silently stops deploying, and the symptom is a real
+fix that never shipped. Filter paths are relative to the repository root
+regardless of `rootDir`.
 
 ### No CDN
 
