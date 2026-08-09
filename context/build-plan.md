@@ -931,6 +931,32 @@ wake is excluded and the numbers describe the app rather than the plan:
 
 ---
 
+## Phase 8 — Post-release
+
+The build plan closed at the end of Phase 7. This phase exists because work
+arrived afterwards that is genuine user-facing scope rather than a chore, and
+filing it as a footnote to feature 38 would have misrepresented what it is.
+
+### 39 Landing footer links
+
+**Logic:**
+
+- The landing footer at `src/components/landing/LandingFooter.tsx` gains icon-only links to the GitHub repository, LinkedIn profile, email, and portfolio site
+- Landing page only. `LandingFooter` is imported by `src/app/page.tsx` and nothing else, so the boundary needs no guard — a grep is the check
+- Every link carries an accessible name, since an icon-only link has no visible text to fall back on
+- Touch targets meet the WCAG 44×44 floor on coarse pointers, keyed to pointer type rather than to a breakpoint
+
+**Decisions agreed before building** (see `build-journal.md` for the full entries):
+
+- **The landing page already had a footer, and the feature is enrichment rather than construction.** It held a wordmark and a tagline with no links, which is why it did not register as one. Worth stating because the gap it closes is real: `project-overview.md` names "an engineer reading the repository" as the secondary audience, and until now the deployed application offered no route to that repository
+- **GitHub and LinkedIn are inlined SVGs, not Lucide imports.** Verified against the installed package rather than assumed: `lucide-react@1.27` exports 6,014 icons and neither `Github` nor `Linkedin` is among them — Lucide removed its brand glyphs, and for LinkedIn there is no generic substitute worth showing. Both marks are filled with `currentColor` so they inherit the link's text token; no brand blue and no octocat black enters the page, which is what lets a logo coexist with the "no chromatic accent" invariant
+- **No local focus styles.** `globals.css` gives every `:focus-visible` element a 1px primary ring at 2px offset. F37 had to strip three components that re-implemented that ring locally as a box-shadow, and adding a fourth would have reintroduced the exact defect that feature closed
+- **Link data is a module-level `const` in the component**, matching `STEPS` in `HowItWorks.tsx`. It is presentation copy used in one file, and `src/lib/constants.ts` is scoped by `architecture.md` to public configuration and tuning values
+- **Icon-only is in tension with a design invariant, and the cost is recorded rather than resolved.** `DESIGN.md` says nothing is reachable only on hover. The GitHub mark, the LinkedIn mark and an envelope are self-identifying, but a globe is not — "portfolio" is discoverable only by hovering for the tooltip or by using a screen reader. Accepted deliberately at the user's choice; the fix, if it is ever wanted, is a visible label on that one link
+- **`/share/[slug]` is deliberately excluded.** It is public and footer-less, and attaching personal contact details to a page displaying someone else's shared conversation is the wrong place for them
+
+---
+
 ## Feature Count
 
 | Phase | Features |
@@ -943,4 +969,5 @@ wake is excluded and the numbers describe the app rather than the plan:
 | Phase 5 — Attachments | 3 |
 | Phase 6 — Compare, share, export | 4 |
 | Phase 7 — Hardening and release | 4 |
-| **Total** | **38** |
+| Phase 8 — Post-release | 1 |
+| **Total** | **39** |

@@ -38,6 +38,29 @@ At that phase's checkpoint, the whole phase collapses to:
 
 -->
 
+## Phase 8 — Post-release
+
+### Feature 39 — Landing footer links  *(2026-08-09)*
+
+- Decision: **The footer already existed.** It held a wordmark and a tagline and no links, which is why it did not read as one. The feature is enrichment of `src/components/landing/LandingFooter.tsx`, not construction, and the gap it closes is one `project-overview.md` has implied since Phase 0 — the secondary audience is "an engineer reading the repository to judge whether the author can build something real", and the deployed application offered no route to that repository.
+- Decision: **"Landing only" needs no guard.** `LandingFooter` is imported by `src/app/page.tsx` and nothing else, so the boundary is structural. The check is a grep, not a test.
+- Decision: **GitHub and LinkedIn are inlined SVGs rather than Lucide imports**, and this was a correction rather than a preference. See the gotcha below. Both are filled `currentColor`, so they inherit the link's text token and no brand blue or octocat black enters a page whose design system forbids a chromatic accent.
+- Decision: **No local focus style.** `globals.css` already gives every `:focus-visible` element a 1px primary ring at 2px offset. F37 stripped three components that had re-implemented it locally as a box-shadow — two spellings of one rule — so writing a fourth would have reopened a defect a whole feature closed.
+- Decision: **Link data is a module-level `const` in the component**, matching `STEPS` in `HowItWorks.tsx`. `src/lib/constants.ts` is scoped by `architecture.md` to public configuration and tuning values; footer copy used in one file is neither.
+- Decision: **`/share/[slug]` is deliberately excluded.** It is public and footer-less. Attaching personal contact details to a page rendering someone else's shared conversation is the wrong place for them.
+- Decision: **Icon-only was chosen with its cost stated rather than discovered later.** `DESIGN.md` says nothing is reachable only on hover. The GitHub mark, the LinkedIn mark and an envelope are self-identifying; a globe is not, so "portfolio" is available only by tooltip or screen reader. Accepted; the fix, if wanted, is a visible label on that one link.
+- Gotcha: **`lucide-react@1.27` exports 6,014 icons and neither `Github` nor `Linkedin` is among them.** Lucide removed its brand glyphs, and there is no generic stand-in for LinkedIn — the nearest candidates are `GitFork` and `GitBranch`, which say "version control", not "GitHub". Because the package was already a dependency, this is exactly the shape that invites writing the import from memory and finding out at runtime. Checked against the installed package before any code was written, and it is what forced the inline-SVG approach.
+- Gotcha: **A measurement artefact nearly became a false bug report.** Reading `outlineColor` after a programmatic `.focus()` returned `currentColor` on three of the four links, which looks exactly like a broken focus ring. It is not: `:focus-visible` does not match programmatic focus. Real `Tab` presses report `matches(':focus-visible') === true` and `1px solid rgb(247, 245, 240)` on all four. Verify a focus rule the way a user reaches it.
+- Gotcha: **`${PIPESTATUS[0]}` through a pipe to `tail` reported the wrong command's exit status**, briefly making a failing lint run look clean. The printed errors were the real signal. Re-run redirected to a file when the exit code is the thing being claimed.
+- Gotcha: **The repository the new link points at is private.** `gh repo view` reports `"visibility":"PRIVATE"`, and an unauthenticated API call 404s. The URL is correct and the code is unaffected — but the link 404s for every visitor until the repo is made public, and nothing in typecheck, lint, build, or the browser could have caught it. Left as an outstanding item because it is a repository setting, not a code change.
+- Note: the two brand marks are *filled* shapes while Lucide's `Mail` and `Globe` are *stroked* outlines, so LinkedIn's solid block reads heavier than its neighbours at 16px. Common on the web and accepted; recorded because it is a real inconsistency rather than an illusion.
+- Verified: `pnpm typecheck` exit 0. `pnpm lint` clean after fixing two `import/order` errors. `pnpm build` exit 0 with no errors or warnings.
+- Verified: against a **production build** at `localhost:3000`, four links present with the intended `href`s and accessible names — "Source on GitHub", "LinkedIn profile", "Email Siddarth Vaidya", "Portfolio site". The three web links carry `target="_blank" rel="noreferrer noopener"`; the `mailto:` carries neither.
+- Verified: every link box 36×36 at fine pointer and **44×44 under `pointer: coarse`** (Pixel emulation, 360×732), meeting the WCAG floor. Computed colour `rgb(174, 166, 156)` = `#aea69c` = `--color-mute` on all four, and the two brand SVGs resolve `fill` to the same value — no chromatic value on the page.
+- Verified: real `Tab` presses give all four `1px solid rgb(247, 245, 240)` at `outline-offset: 2px`, matching `DESIGN.md`'s focus-ring spec exactly. Tab order is GitHub → LinkedIn → Email → Portfolio.
+- Verified: no horizontal overflow at 360px, the project's stated minimum width. The only console message is a pre-existing `favicon.ico` 404, unrelated to this change.
+- Verified: `grep -rn "LandingFooter" src/` returns `page.tsx` and the component only; `src/app/share/[slug]/page.tsx` contains no footer.
+
 ## Phase 7 — Hardening and release *(compacted)*
 
 Four features, all on 2026-08-09, closing with the deployment. **PromptX is live
