@@ -120,13 +120,18 @@ export const KEY_PROBE_TIMEOUT_MS = 10 * 1000
  *
  * NEXT_PUBLIC_ is load-bearing rather than cosmetic. Next inlines only
  * NEXT_PUBLIC_* into client bundles, so an unprefixed read here would be
- * `undefined` in the composer and silently fall back to 20 while the server
- * enforced the real number. The value is not a secret — the cap is displayed
- * in the UI by design. The tradeoff is that it is inlined at BUILD time, so
- * changing it on Render needs a rebuild, not a restart.
+ * `undefined` in the composer and silently fall back to this default while the
+ * server enforced the real number. The value is not a secret — the cap is
+ * displayed in the UI by design. The tradeoff is that it is inlined at BUILD
+ * time, so changing it on Render needs a rebuild, not a restart.
+ *
+ * The default is 5 rather than the 20 this shipped with, and the direction
+ * matters: it is the number used when configuration is missing, so it should
+ * under-promise. Google's free tier grants 20 requests a day across every user
+ * rather than per user, which is the measurement that moved it. (F38)
  */
 export const SHARED_KEY_DAILY_MESSAGE_LIMIT = Number(
-  process.env.NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT ?? 20,
+  process.env.NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT ?? 5,
 )
 
 /** Global monthly ceiling. Breaching it trips the circuit breaker for every user. */

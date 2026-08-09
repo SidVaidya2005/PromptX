@@ -86,6 +86,12 @@ export async function generateConversationTitle(
       // Bounded like every other provider call. Render will hold a request open
       // for 100 minutes and will not rescue us from a hung upstream.
       abortSignal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+      // Unconditionally zero here, where the chat route decides per request:
+      // sharedTitleModel() takes no user id because there is nobody to charge,
+      // so this call is *always* on the shared key. Retrying it would spend two
+      // more of the free tier's twenty daily requests on a cosmetic label, at
+      // the exact moment the quota is already refusing real answers. (F38)
+      maxRetries: 0,
     })
 
     // Before the normalizing below, deliberately: the money was spent the moment

@@ -9,8 +9,14 @@
 PromptX is a personal AI chat workspace. A user signs in with Google and holds
 long-form conversations with models from OpenAI, Anthropic, Google, and
 OpenRouter — using their own API keys, which PromptX stores encrypted. Users
-without a key of their own get a shared Gemini key capped at 20 messages a day,
+without a key of their own get a shared Gemini key capped at 5 messages a day,
 so the product is usable within thirty seconds of signing in.
+
+That figure was 20 until F38 deployed and measured the key it actually runs on.
+Google's free tier grants **20 requests per day across every user**, not per
+user, so a single visitor spending a 20-message allowance would consume the whole
+project's daily quota and everybody after them would be refused by Google rather
+than by PromptX. Five is what keeps the in-app wall the thing that fires.
 
 Beyond chat, PromptX adds the things a heavy chat user actually misses: an
 outline rail for jumping around inside a long thread, full-text search across
@@ -75,7 +81,7 @@ sidebar.
 
 ### Hit the quota wall
 
-Once the user has spent their 20 shared messages for the day, the composer
+Once the user has spent their 5 shared messages for the day, the composer
 shows the limit and links to `/settings/keys`. Nothing is lost — the
 conversation stays intact, and adding a key resumes it immediately.
 
@@ -185,7 +191,7 @@ to judge whether the author can build something real.
 ## Success Criteria
 
 - A brand-new user can sign in with Google and receive a streamed answer without adding a key or reading any instructions.
-- The 21st shared-key message of a calendar day is refused with a clear message and a link to add a key; the 20th succeeds.
+- The message after the daily cap is refused with a clear message and a link to add a key; the one on the cap succeeds. Stated against `SHARED_KEY_DAILY_MESSAGE_LIMIT` rather than a literal, because F38 moved it from 20 to 5 and a criterion naming a number goes stale silently.
 - When the global monthly budget ceiling is breached, the shared key stops serving every user, while users with their own keys are unaffected.
 - No HTTP response anywhere in the application contains a decrypted provider API key. The only key material the client receives is `last_four`.
 - Signed in as user A, no query, route, or crafted request returns any row belonging to user B — verified against RLS with the anon key, not just in application code.

@@ -2,7 +2,7 @@
 
 An AI chat workspace with Google Sign-In where users chat with OpenAI, Anthropic,
 Google, and OpenRouter models using their own encrypted API keys — or a shared
-Gemini key capped at 20 messages a day.
+Gemini key capped at 5 messages a day.
 
 ## Project context lives in `context/`
 

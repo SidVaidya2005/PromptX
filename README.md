@@ -2,7 +2,7 @@
 
 An AI chat workspace with Google Sign-In. Chat with OpenAI, Anthropic, Google,
 and OpenRouter models using your own API keys — encrypted at rest — or use a
-shared Gemini key capped at 20 messages a day.
+shared Gemini key capped at 5 messages a day.
 
 **Live: https://promptx-ypm8.onrender.com**
 
@@ -17,7 +17,7 @@ shared Gemini key capped at 20 messages a day.
 
 - **One history across four providers.** Switch between GPT, Claude, Gemini, and OpenRouter models mid-conversation without leaving the thread.
 - **Bring your own key.** Keys are AES-256-GCM encrypted server-side; the browser only ever sees the last four characters.
-- **Usable in thirty seconds.** A shared Gemini key covers 20 messages a day for anyone who hasn't added a key yet.
+- **Usable in thirty seconds.** A shared Gemini key covers 5 messages a day for anyone who hasn't added a key yet.
 - **Navigate long threads.** An outline rail lists every prompt in a conversation as a jump target.
 - **Find anything.** Postgres full-text search across every message, ranked, with highlighted snippets.
 - **Reusable prompts.** A tagged library, insertable into any conversation.
@@ -88,7 +88,7 @@ You will need:
 - A Supabase project. Migrations live in `supabase/migrations/` and are applied through the Supabase MCP — there is no local stack, so `supabase db reset` does not apply here.
 - A Google OAuth client. Its authorized redirect URI is **Supabase's** callback (`https://<ref>.supabase.co/auth/v1/callback`), not the app's — entering the app URL yields `redirect_uri_mismatch`.
 - `ENCRYPTION_KEY`: 32 bytes base64, `openssl rand -base64 32`. Rotating it invalidates every stored key, so rotation needs a re-encryption migration.
-- A Google AI key for the shared fallback, with a hard budget cap on the billing account behind it. The in-app circuit breaker fails open by design; the provider-side cap is what actually guarantees the bill.
+- A Google AI key for the shared fallback. This deployment runs it on the **free tier**, which grants 20 requests a day across all users — not per user — which is why `NEXT_PUBLIC_SHARED_KEY_DAILY_MESSAGE_LIMIT` is 5 rather than the 20 the design originally assumed. If you put a billed key here instead, set a hard budget cap on the account: the in-app circuit breaker fails open by design, so the provider-side cap is the only thing that actually bounds the bill.
 
 ### Commands
 

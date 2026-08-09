@@ -5,11 +5,16 @@ import { SHARED_KEY_DAILY_MESSAGE_LIMIT } from '@/lib/constants'
 import { adminClient, createActor, deleteActors, type Actor } from './support/session'
 
 /**
- * The wall a user without their own key meets on their twenty-first message.
+ * The wall a user without their own key meets one message past the cap.
+ *
+ * Every figure here is derived from `SHARED_KEY_DAILY_MESSAGE_LIMIT` rather than
+ * written out, because that number is configuration and has already moved once:
+ * F38 took it from 20 to 5 when the shared key turned out to be on a free tier
+ * granting twenty requests a *day* across all users, not per user.
  *
  * `tests/server/quota.test.ts` already proves the rule where it is enforced: the
- * 19th and 20th claims succeed, the 21st is refused, and the claim is a single
- * atomic statement rather than a read followed by a write. None of that is what
+ * last two claims succeed, the one past the cap is refused, and the claim is a
+ * single atomic statement rather than a read followed by a write. None of that is what
  * this spec is for. What no test in `tests/` can see is whether the person is
  * *told* — whether the composer actually locks and says why, or silently accepts
  * a message the server will refuse.
@@ -57,7 +62,11 @@ test('leaves the composer usable on the last free message', async ({ page, conte
   await page.goto('/chat')
 
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeEnabled()
-  await expect(page.getByText('1 of 20 free messages left today')).toBeVisible()
+  await expect(
+    page.getByText(
+      `1 of ${SHARED_KEY_DAILY_MESSAGE_LIMIT} free messages left today`,
+    ),
+  ).toBeVisible()
 })
 
 test('locks the composer and says why once the allowance is spent', async ({ page, context }) => {

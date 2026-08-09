@@ -565,6 +565,25 @@ export async function POST(request: Request) {
       AbortSignal.timeout(STREAM_TIMEOUT_MS),
       request.signal,
     ]),
+    /**
+     * The shared key does not retry; a caller's own key keeps the default. (F38)
+     *
+     * The SDK default is 2 retries, and its backoff fires the three attempts at
+     * roughly 0s, 2s and 6s. Google's free tier answers an exhausted quota with
+     * a retry-after measured in tens of seconds — 52s when this was found — so
+     * every retry lands inside the window and *cannot* succeed. It is not a
+     * wasted request but three, and on a 20-requests-per-day free tier that is
+     * 15% of the day spent proving a refusal we were already told about.
+     *
+     * Worse, it prolongs what it reacts to: the retries keep the bucket empty,
+     * so the outage outlives the burst that caused it.
+     *
+     * Scoped to the shared key rather than applied globally, because the
+     * reasoning is about *this* key's quota. A user's own key has its own limits
+     * and its own billing, and a transient network fault there is exactly the
+     * case retries exist for.
+     */
+    maxRetries: usedSharedKey ? 0 : undefined,
     onEnd: async ({ text: answer, usage }) => {
       await completeMessage(assistantMessageId, {
         content: answer,
